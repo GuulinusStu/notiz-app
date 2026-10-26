@@ -49,3 +49,5 @@ def test_pick_default_model_prefers_known_free_models():
               {"id": "meta-llama/llama-3.3-70b-instruct:free", "free": True}]
     assert llm.pick_default_model(models) == "meta-llama/llama-3.3-70b-instruct:free"
     assert llm.pick_default_model([{"id": "a/paid", "free": False}]) is None
+    assert llm.pick_default_model([{"id": "cohere/north-mini-code:free", "free": True},
+                                   {"id": "openrouter/free", "free": True}]) == "openrouter/free"

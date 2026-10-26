@@ -1,5 +1,11 @@
 import json
+import os
+import tempfile
 import zlib
+
+# Vor dem Import der App: Hintergrund-Threads, die einen Test überleben, dürfen nie die echten Daten anfassen.
+os.environ["NOTIZAPP_DATA"] = tempfile.mkdtemp(prefix="notizapp-test-")
+os.environ["NOTIZAPP_ONENOTE_AUTO_SYNC"] = "0"
 
 import numpy as np
 import pytest
@@ -12,6 +18,7 @@ def temp_data(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DATA_DIR", tmp_path)
     monkeypatch.setattr(config, "DB_PATH", tmp_path / "test.db")
     monkeypatch.setattr(config, "UPLOAD_DIR", tmp_path / "uploads")
+    monkeypatch.setattr(config, "ONENOTE_AUTO_SYNC", False)
     from app import db, worker
     db.init()
     yield

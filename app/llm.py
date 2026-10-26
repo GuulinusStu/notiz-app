@@ -16,7 +16,9 @@ class LLMError(RuntimeError):
 _THINK = re.compile(r"<think>.*?</think>", re.S)
 
 # Bevorzugte Gratis-Modelle, falls in den Einstellungen nichts gewählt ist (erstes verfügbares gewinnt).
-PREFERRED_FREE = ["deepseek", "llama-3.3-70b", "qwen3", "gemma-3-27b", "mistral-small"]
+PREFERRED_FREE = ["deepseek", "llama-3.3-70b", "gemma-3-27b", "qwen3", "mistral-small", "openrouter/free"]
+# Spezialmodelle, die für Schulnotizen wenig taugen
+UNSUITABLE = ("code", "coder", "vision", "-vl", "guard", "embed", "audio", "image")
 
 
 # --- Einstellungen -----------------------------------------------------------
@@ -96,7 +98,7 @@ def list_models() -> list[dict]:
 
 
 def pick_default_model(models: list[dict]) -> str | None:
-    free = [m["id"] for m in models if m["free"]]
+    free = [m["id"] for m in models if m["free"] and not any(u in m["id"].lower() for u in UNSUITABLE)]
     for wanted in PREFERRED_FREE:
         for model_id in free:
             if wanted in model_id:
@@ -115,7 +117,8 @@ def _get_embedder():
     with _embed_lock:
         if _embedder is None:
             from fastembed import TextEmbedding
-            _embedder = TextEmbedding(config.EMBED_MODEL)
+            # Eigener Cache-Ordner, weil Windows den Temp-Ordner beim Aufräumen leeren kann.
+            _embedder = TextEmbedding(config.EMBED_MODEL, cache_dir=str(config.DATA_DIR / "modelle"))
         return _embedder
 
 
