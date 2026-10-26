@@ -16,9 +16,10 @@ class LLMError(RuntimeError):
 _THINK = re.compile(r"<think>.*?</think>", re.S)
 
 # Bevorzugte Gratis-Modelle, falls in den Einstellungen nichts gewählt ist (erstes verfügbares gewinnt).
-PREFERRED_FREE = ["deepseek", "llama-3.3-70b", "gemma-3-27b", "qwen3", "mistral-small", "openrouter/free"]
-# Spezialmodelle, die für Schulnotizen wenig taugen
-UNSUITABLE = ("code", "coder", "vision", "-vl", "guard", "embed", "audio", "image")
+PREFERRED_FREE = ["deepseek", "llama-3.3-70b", "gemma-3-27b", "qwen3", "mistral-small"]
+PREFERRED_VISION = ["gemma-3-27b", "llama-4", "qwen2.5-vl", "mistral-small", "gemma-3"]
+# Spezialmodelle, die für Schulnotizen wenig taugen, und Zufalls-Router (wählen manchmal solche Modelle)
+UNSUITABLE = ("code", "coder", "vision", "-vl", "guard", "safety", "embed", "audio", "image", "openrouter/")
 
 
 # --- Einstellungen -----------------------------------------------------------
@@ -29,6 +30,10 @@ def api_key() -> str:
 
 def chat_model() -> str:
     return db.get_setting("chat_model") or config.CHAT_MODEL
+
+
+def vision_model() -> str:
+    return db.get_setting("vision_model")
 
 
 def _headers() -> dict:
@@ -48,9 +53,9 @@ def _error_text(r: httpx.Response) -> str:
 # --- Chat --------------------------------------------------------------------
 
 def chat(messages: list[dict], *, json_mode: bool = False, temperature: float = 0.3,
-         timeout: float = 300, **_ignored) -> str:
+         timeout: float = 300, model: str | None = None, **_ignored) -> str:
     headers = _headers()
-    model = chat_model()
+    model = model or chat_model()
     if not model:
         raise LLMError("Kein KI-Modell gewählt. Bitte unter „Einstellungen“ ein Modell auswählen.")
     payload = {"model": model, "messages": messages, "temperature": temperature}
@@ -90,20 +95,42 @@ def list_models() -> list[dict]:
     for m in r.json().get("data", []):
         pricing = m.get("pricing", {})
         free = m["id"].endswith(":free") or (pricing.get("prompt") == "0" and pricing.get("completion") == "0")
-        models.append({"id": m["id"], "name": m.get("name", m["id"]), "free": free,
+        inputs = (m.get("architecture") or {}).get("input_modalities") or []
+        models.append({"id": m["id"], "name": m.get("name", m["id"]), "free": free, "vision": "image" in inputs,
                        "context": m.get("context_length"),
                        "price_in": pricing.get("prompt"), "price_out": pricing.get("completion")})
     models.sort(key=lambda m: (not m["free"], m["name"].lower()))
     return models
 
 
-def pick_default_model(models: list[dict]) -> str | None:
-    free = [m["id"] for m in models if m["free"] and not any(u in m["id"].lower() for u in UNSUITABLE)]
-    for wanted in PREFERRED_FREE:
+def pick_default_model(models: list[dict], *, vision: bool = False) -> str | None:
+    free = [m["id"] for m in models if m["free"] and (m.get("vision") or not vision)
+            and not any(u in m["id"].lower() for u in UNSUITABLE)]
+    for wanted in (PREFERRED_VISION if vision else PREFERRED_FREE):
         for model_id in free:
             if wanted in model_id:
                 return model_id
     return free[0] if free else None
+
+
+IMAGE_PROMPT = """Das ist eine Seite aus den Schulnotizen (OneNote). Schreibe den gesamten Inhalt als Text ab:
+gedruckten Text, Handschrift, Formeln, Tabellen und Beschriftungen von Skizzen. Beschreibe Diagramme kurz in Worten.
+Antworte nur mit dem Inhalt, auf Deutsch (Fachbegriffe so lassen, wie sie dastehen).
+Wenn die Seite leer ist, antworte nur mit: (leer)"""
+
+
+def read_image(png: bytes) -> str:
+    """Lässt ein Bild (z. B. eine Seite mit Handschrift) von einem Bild-fähigen Modell abschreiben."""
+    import base64
+
+    model = vision_model()
+    if not model:
+        raise LLMError("Für Bilder und Handschrift ist kein Bild-Modell gewählt (Einstellungen).")
+    url = "data:image/png;base64," + base64.b64encode(png).decode()
+    text = chat([{"role": "user", "content": [{"type": "text", "text": IMAGE_PROMPT},
+                                               {"type": "image_url", "image_url": {"url": url}}]}],
+                model=model, temperature=0)
+    return "" if text.strip() == "(leer)" else text
 
 
 # --- Suche (lokal) -----------------------------------------------------------
@@ -148,4 +175,5 @@ def parse_json(text: str):
 
 def status() -> dict:
     return {"provider": "openrouter", "key_set": bool(api_key()), "chat_model": chat_model(),
+            "vision_model": vision_model(),
             "embed_model": config.EMBED_MODEL}

@@ -130,3 +130,21 @@ def test_reindex_keeps_text(fake_llm):
     db.replace_chunks(doc_id, [])
     ingest.reindex(doc_id)
     assert study.search("Inhalt")[0]["doc_id"] == doc_id
+
+
+def test_pdf_pages_without_text_are_read_by_vision_model(tmp_path, monkeypatch):
+    import pymupdf
+    path = tmp_path / "hand.pdf"
+    with pymupdf.open() as pdf:
+        page = pdf.new_page()
+        page.insert_text((72, 40), "Zahlensysteme Seite 1")
+        for i in range(6):  # "Handschrift" als Striche
+            page.draw_line((72, 100 + i * 20), (300, 110 + i * 20))
+        pdf.new_page().insert_text((72, 72), " ".join(["Wort"] * 40))
+        pdf.save(path)
+    calls = []
+    monkeypatch.setattr(llm, "read_image", lambda png: calls.append(png) or "Das Binärsystem hat die Basis 2.")
+    text = ingest.extract_pdf_text(path, read_images=True)
+    assert len(calls) == 1 and calls[0].startswith(b"\x89PNG")
+    assert "Basis 2" in text and "Seite 2" in text
+    assert "Basis 2" not in ingest.extract_pdf_text(path)  # ohne Bild-Modell nur Text

@@ -39,3 +39,13 @@ def test_rejects_wrong_file_type(fake_llm):
     with TestClient(app) as client:
         r = client.post("/api/upload/pdf", files={"files": ("virus.exe", b"x")})
         assert r.status_code == 400
+
+
+def test_reprocess_only_errors(fake_llm):
+    ok = db.create_document("ok", "text", raw_text="x")
+    bad = db.create_document("bad", "pdf", source_path="/fehlt.pdf")
+    db.update_document(ok, status="ready")
+    db.update_document(bad, status="error", error="kaputt")
+    with TestClient(app) as client:
+        assert client.post("/api/documents/reprocess", json={"only_errors": True}).json() == {"queued": 1}
+        assert db.get_document(ok)["status"] == "ready"

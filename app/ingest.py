@@ -67,16 +67,31 @@ def split_lines(text: str, max_words: int) -> list[str]:
 
 # --- Quellen lesen ---------------------------------------------------------
 
-def extract_pdf_text(path: Path) -> str:
+MIN_PAGE_WORDS = 25  # weniger Text auf einer Seite = vermutlich Bild, Scan oder Handschrift
+
+
+def extract_pdf_text(path: Path, progress: ProgressFn = lambda _: None, read_images: bool = False) -> str:
+    """Liest den Text eines PDFs. Seiten fast ohne Text werden auf Wunsch von der KI abgeschrieben."""
     import pymupdf
 
     pages = []
     with pymupdf.open(path) as pdf:
         for i, page in enumerate(pdf, start=1):
             text = page.get_text().strip()
+            if read_images and len(text.split()) < MIN_PAGE_WORDS and _has_visual_content(page):
+                progress(f"Erkenne Bild/Handschrift auf Seite {i} von {pdf.page_count}…")
+                png = page.get_pixmap(dpi=130).tobytes("png")
+                text = (text + "\n" + llm.read_image(png)).strip()
             if text:
                 pages.append(f"--- Seite {i} ---\n{text}")
     return "\n\n".join(pages)
+
+
+def _has_visual_content(page) -> bool:
+    try:
+        return bool(page.get_images()) or len(page.get_drawings()) > 3
+    except Exception:
+        return True
 
 
 _whisper_model = None
@@ -183,7 +198,7 @@ def process(doc_id: int) -> None:
     try:
         if doc["kind"] == "pdf":
             progress("Lese PDF…")
-            raw = extract_pdf_text(Path(doc["source_path"]))
+            raw = extract_pdf_text(Path(doc["source_path"]), progress, read_images=bool(llm.vision_model()))
             if not raw.strip():
                 raise ValueError("Im PDF wurde kein Text gefunden (evtl. nur Bilder oder Handschrift).")
             db.update_document(doc_id, raw_text=raw, clean_text=raw)

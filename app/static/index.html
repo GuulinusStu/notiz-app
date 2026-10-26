@@ -155,10 +155,22 @@
             <select id="set-model"><option value="">Wird geladen…</option></select>
             <label class="row small nowrap"><input type="checkbox" id="only-free" checked> nur gratis</label>
           </div>
+          <label class="small">Bild-Modell (für Handschrift, Bilder und Scans in OneNote-PDFs)</label>
+          <select id="set-vision"><option value="">Wird geladen…</option></select>
           <div class="row wrap">
             <button id="set-save" class="primary">Speichern</button>
             <button id="set-test">Testen</button>
             <span id="set-result" class="hint"></span>
+          </div>
+        </div>
+        <div class="card">
+          <h2>🔄 Notizen neu verarbeiten</h2>
+          <p class="hint">Nach dem Wählen eines Bild-Modells: alle PDFs neu einlesen, damit Handschrift und Bilder erkannt werden.
+            Jede Seite mit Bild braucht eine KI-Anfrage. Bei Gratis-Modellen gilt ein Tageslimit; was nicht klappt, kannst du später nochmals versuchen.</p>
+          <div class="row wrap">
+            <button id="reprocess-pdfs">Alle PDFs neu einlesen</button>
+            <button id="reprocess-errors">Fehlgeschlagene nochmals versuchen</button>
+            <span id="reprocess-result" class="hint"></span>
           </div>
         </div>
       </section>

@@ -552,26 +552,29 @@ async function loadSettings() {
   $("#key-hint").textContent = s.key_set ? `(gespeichert ${s.key_hint})` : "(noch keiner)";
   $("#set-key").value = "";
   try {
-    const { models, suggested } = await api("/api/models");
+    const { models, suggested, suggested_vision } = await api("/api/models");
     allModels = models;
-    renderModels(s.chat_model || suggested || "");
+    renderModels(s.chat_model || suggested || "", s.vision_model || suggested_vision || "");
   } catch (e) {
     $("#set-model").innerHTML = `<option value="${esc(s.chat_model)}">${esc(s.chat_model || "Modell-Liste nicht erreichbar")}</option>`;
+    $("#set-vision").innerHTML = `<option value="${esc(s.vision_model)}">${esc(s.vision_model || "–")}</option>`;
   }
 }
 
-function renderModels(selected) {
+function renderModels(selected, selectedVision) {
   const onlyFree = $("#only-free").checked;
-  const list = allModels.filter((m) => !onlyFree || m.free || m.id === selected);
   const price = (m) => (m.free ? "gratis" : `$${(Number(m.price_in) * 1e6).toFixed(2)} / Mio. Tokens`);
-  $("#set-model").innerHTML = list.map((m) =>
-    `<option value="${esc(m.id)}" ${m.id === selected ? "selected" : ""}>${esc(m.name)} – ${price(m)}</option>`).join("");
+  const options = (list, sel) => list.map((m) =>
+    `<option value="${esc(m.id)}" ${m.id === sel ? "selected" : ""}>${esc(m.name)} – ${price(m)}</option>`).join("");
+  $("#set-model").innerHTML = options(allModels.filter((m) => !onlyFree || m.free || m.id === selected), selected);
+  $("#set-vision").innerHTML = `<option value="">– keins (nur getippten Text lesen) –</option>` +
+    options(allModels.filter((m) => m.vision && (!onlyFree || m.free || m.id === selectedVision)), selectedVision);
 }
 
-$("#only-free").addEventListener("change", () => renderModels($("#set-model").value));
+$("#only-free").addEventListener("change", () => renderModels($("#set-model").value, $("#set-vision").value));
 
 $("#set-save").addEventListener("click", (e) => busy(e.target, async () => {
-  const body = { chat_model: $("#set-model").value };
+  const body = { chat_model: $("#set-model").value, vision_model: $("#set-vision").value };
   if ($("#set-key").value.trim()) body.openrouter_key = $("#set-key").value.trim();
   await postJSON("/api/settings", body);
   $("#set-result").textContent = "✅ Gespeichert";
@@ -586,6 +589,19 @@ $("#set-test").addEventListener("click", (e) => busy(e.target, async () => {
     $("#set-result").textContent = "✅ KI antwortet: " + reply;
   } catch (err) { $("#set-result").textContent = "⚠️ " + err.message; }
 }));
+
+async function reprocess(button, onlyErrors) {
+  await busy(button, async () => {
+    const { queued } = await postJSON("/api/documents/reprocess", { only_errors: onlyErrors });
+    $("#reprocess-result").textContent = `✅ ${queued} Notizen werden im Hintergrund neu verarbeitet.`;
+    loadDocs();
+  });
+}
+
+$("#reprocess-pdfs").addEventListener("click", (e) => {
+  if (confirm("Alle PDFs neu einlesen? Das kann eine Weile dauern.")) reprocess(e.target, false);
+});
+$("#reprocess-errors").addEventListener("click", (e) => reprocess(e.target, true));
 
 // --- Start -------------------------------------------------------------------
 

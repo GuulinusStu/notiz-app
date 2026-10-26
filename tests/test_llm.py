@@ -49,5 +49,28 @@ def test_pick_default_model_prefers_known_free_models():
               {"id": "meta-llama/llama-3.3-70b-instruct:free", "free": True}]
     assert llm.pick_default_model(models) == "meta-llama/llama-3.3-70b-instruct:free"
     assert llm.pick_default_model([{"id": "a/paid", "free": False}]) is None
-    assert llm.pick_default_model([{"id": "cohere/north-mini-code:free", "free": True},
-                                   {"id": "openrouter/free", "free": True}]) == "openrouter/free"
+    odd = [{"id": "cohere/north-mini-code:free", "free": True}, {"id": "openrouter/free", "free": True},
+           {"id": "meta-llama/llama-guard-4:free", "free": True}, {"id": "google/gemma-3-27b-it:free", "free": True}]
+    assert llm.pick_default_model(odd) == "google/gemma-3-27b-it:free"
+
+
+def test_pick_vision_model_needs_image_input():
+    models = [{"id": "deepseek/chat:free", "free": True, "vision": False},
+              {"id": "google/gemma-3-27b-it:free", "free": True, "vision": True}]
+    assert llm.pick_default_model(models, vision=True) == "google/gemma-3-27b-it:free"
+
+
+def test_read_image_sends_picture(monkeypatch):
+    db.set_setting("openrouter_key", "sk-or-test")
+    db.set_setting("vision_model", "google/gemma-3-27b-it:free")
+    seen = {}
+
+    def post(url, json, headers, timeout):
+        seen.update(json=json)
+        return FakeResponse(200, {"choices": [{"message": {"content": "Binär: 1010"}}]})
+
+    monkeypatch.setattr(httpx, "post", post)
+    assert llm.read_image(b"png") == "Binär: 1010"
+    assert seen["json"]["model"] == "google/gemma-3-27b-it:free"
+    part = seen["json"]["messages"][0]["content"][1]
+    assert part["image_url"]["url"].startswith("data:image/png;base64,")

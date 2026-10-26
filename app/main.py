@@ -115,13 +115,14 @@ def rename_subject(r: SubjectRename):
 class SettingsIn(BaseModel):
     openrouter_key: str | None = None
     chat_model: str | None = None
+    vision_model: str | None = None
 
 
 @app.get("/api/settings")
 def get_settings():
     key = llm.api_key()
     return {"key_set": bool(key), "key_hint": f"…{key[-4:]}" if len(key) > 8 else "",
-            "chat_model": llm.chat_model()}
+            "chat_model": llm.chat_model(), "vision_model": llm.vision_model()}
 
 
 @app.post("/api/settings")
@@ -130,13 +131,16 @@ def save_settings(s: SettingsIn):
         db.set_setting("openrouter_key", s.openrouter_key.strip())
     if s.chat_model is not None:
         db.set_setting("chat_model", s.chat_model.strip())
+    if s.vision_model is not None:
+        db.set_setting("vision_model", s.vision_model.strip())
     return get_settings()
 
 
 @app.get("/api/models")
 def models():
     found = llm.list_models()
-    return {"models": found, "suggested": llm.pick_default_model(found)}
+    return {"models": found, "suggested": llm.pick_default_model(found),
+            "suggested_vision": llm.pick_default_model(found, vision=True)}
 
 
 @app.post("/api/settings/test")
@@ -160,6 +164,21 @@ def retry_document(doc_id: int):
     db.update_document(doc_id, status="pending", error="")
     worker.enqueue(doc_id)
     return {"ok": True}
+
+
+class Reprocess(BaseModel):
+    only_errors: bool = False
+
+
+@app.post("/api/documents/reprocess")
+def reprocess(r: Reprocess):
+    """PDFs neu einlesen (z. B. nachdem ein Bild-Modell gewählt wurde) oder Fehlgeschlagene nochmals versuchen."""
+    ids = [d["id"] for d in db.list_documents()
+           if (d["status"] == "error" if r.only_errors else d["kind"] == "pdf" and d["status"] in ("ready", "error"))]
+    for doc_id in ids:
+        db.update_document(doc_id, status="pending", error="")
+        worker.enqueue(doc_id)
+    return {"queued": len(ids)}
 
 
 @app.post("/api/upload/pdf")
