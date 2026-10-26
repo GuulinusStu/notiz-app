@@ -49,3 +49,30 @@ def test_reprocess_only_errors(fake_llm):
     with TestClient(app) as client:
         assert client.post("/api/documents/reprocess", json={"only_errors": True}).json() == {"queued": 1}
         assert db.get_document(ok)["status"] == "ready"
+
+
+def test_stats_search_and_card_management(fake_llm):
+    with TestClient(app) as client:
+        doc_id = client.post("/api/notes", json={"title": "Zahlensysteme", "text": "Das Binärsystem hat die Basis zwei.", "subject": "Mathe"}).json()["id"]
+        wait_ready(client, doc_id)
+        found = client.post("/api/search", json={"query": "Zahlen", "subject": "Mathe"}).json()
+        assert found[0]["doc_id"] == doc_id
+        client.post(f"/api/documents/{doc_id}/flashcards")
+        card = client.get("/api/flashcards?subject=Mathe").json()[0]
+        assert client.patch(f"/api/flashcards/{card['id']}", json={"front": "Basis?", "back": "2"}).json() == {"ok": True}
+        client.post(f"/api/flashcards/{card['id']}/review", json={"grade": 2})
+        client.post("/api/quiz/result", json={"subject": "Mathe", "score": 3, "total": 4})
+        s = client.get("/api/stats?subject=Mathe").json()
+        assert s["notes"] == 1 and s["reviews_today"] == 1 and s["streak"] == 1 and s["quiz_percent"] == 75
+        csv = client.get("/api/flashcards/export.csv").text
+        assert csv == "Basis?\t2\tMathe\n"
+        client.delete(f"/api/flashcards/{card['id']}")
+        assert client.get("/api/flashcards").json() == []
+
+
+def test_streak_counts_consecutive_days():
+    day = 86400
+    now = 1_800_000_000
+    assert db.streak_days([now, now - day, now - 2 * day], now=now) == 3
+    assert db.streak_days([now - day, now - 2 * day], now=now) == 2  # heute noch nicht gelernt
+    assert db.streak_days([now - 3 * day], now=now) == 0

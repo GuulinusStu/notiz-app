@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -233,11 +233,39 @@ def create_note(note: NoteIn):
 class Question(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
     subject: str | None = None
+    history: list[dict] = Field(default_factory=list, max_length=10)
 
 
 @app.post("/api/ask")
 def ask(q: Question):
-    return study.answer(q.question.strip(), subject=q.subject)
+    return study.answer(q.question.strip(), subject=q.subject, history=q.history)
+
+
+class SearchIn(BaseModel):
+    query: str = Field(min_length=1, max_length=500)
+    subject: str | None = None
+
+
+@app.post("/api/search")
+def search(s: SearchIn):
+    return study.find(s.query.strip(), subject=s.subject)
+
+
+@app.get("/api/stats")
+def stats(subject: str | None = None):
+    return db.stats(subject)
+
+
+class QuizResult(BaseModel):
+    subject: str | None = None
+    score: int = Field(ge=0)
+    total: int = Field(ge=1)
+
+
+@app.post("/api/quiz/result")
+def quiz_result(r: QuizResult):
+    db.log_quiz(r.subject or "", min(r.score, r.total), r.total)
+    return {"ok": True}
 
 
 class SubjectIn(BaseModel):
@@ -272,6 +300,40 @@ def flashcards(doc_id: int, n: int = 10):
     return {"created": study.make_flashcards(require_doc(doc_id), n=max(1, min(n, 30)))}
 
 
+@app.get("/api/flashcards")
+def all_cards(subject: str | None = None):
+    return db.list_flashcards(subject)
+
+
+@app.get("/api/flashcards/export.csv")
+def export_cards(subject: str | None = None):
+    """Karteikarten als CSV (Tabulator-getrennt), z. B. für den Import in Anki."""
+    def clean(text: str) -> str:
+        return " ".join(text.split())
+    lines = [f"{clean(c['front'])}\t{clean(c['back'])}\t{clean(c['subject'] or '')}" for c in db.list_flashcards(subject)]
+    return Response("\n".join(lines) + "\n", media_type="text/tab-separated-values; charset=utf-8",
+                    headers={"Content-Disposition": 'attachment; filename="karteikarten.txt"'})
+
+
+class CardEdit(BaseModel):
+    front: str = Field(min_length=1, max_length=2000)
+    back: str = Field(min_length=1, max_length=4000)
+
+
+@app.patch("/api/flashcards/{card_id}")
+def edit_card(card_id: int, c: CardEdit):
+    if not db.get_flashcard(card_id):
+        raise HTTPException(404, "Karte nicht gefunden.")
+    db.edit_flashcard(card_id, c.front.strip(), c.back.strip())
+    return {"ok": True}
+
+
+@app.delete("/api/flashcards/{card_id}")
+def delete_card(card_id: int):
+    db.delete_flashcard(card_id)
+    return {"ok": True}
+
+
 @app.get("/api/flashcards/due")
 def due_cards(subject: str | None = None):
     return db.due_flashcards(subject=subject)
@@ -288,6 +350,8 @@ def review(card_id: int, r: Review):
         raise HTTPException(404, "Karte nicht gefunden.")
     new = srs.schedule(card, r.grade)
     db.update_flashcard(card_id, **new)
+    doc = db.get_document(card["doc_id"]) if card["doc_id"] else None
+    db.log_review(card_id, doc["subject"] if doc else "", r.grade)
     return new
 
 

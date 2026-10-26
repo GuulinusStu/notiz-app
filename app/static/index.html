@@ -4,179 +4,238 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Notiz-App</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header>
-    <h1>📚 Notiz-App</h1>
-    <nav>
-      <button data-view="notes" class="active">Notizen</button>
-      <button data-view="record">Aufnehmen</button>
-      <button data-view="learn">Lernen</button>
-      <button data-view="cards">Karteikarten <span id="due-badge" class="badge" hidden></span></button>
-      <button data-view="settings" title="Einstellungen">⚙️</button>
-    </nav>
-  </header>
-  <div id="status-bar" hidden></div>
+<div class="app">
+  <!-- Register: ein Reiter pro Fach -->
+  <nav class="rail" aria-label="Fächer">
+    <div class="brand">Notiz<span>-App</span></div>
+    <ul id="tabs" class="tabs"></ul>
+    <div class="rail-foot">
+      <button id="open-settings" title="Einstellungen">⚙️ Einstellungen</button>
+    </div>
+  </nav>
 
-  <div class="layout">
-    <!-- Fächer -->
-    <aside>
-      <div class="row between"><h2>Fächer</h2></div>
-      <ul id="subject-list" class="subject-list"></ul>
-      <p class="hint small">✏️ = Fach umbenennen. Gleicher Name = Fächer zusammenlegen.</p>
-    </aside>
+  <main class="sheet">
+    <div class="sheet-inner">
+      <div class="topbar">
+        <div>
+          <h1 id="subject-title">Alle Fächer</h1>
+          <p id="subject-sub" class="subtitle"></p>
+        </div>
+        <div class="search">
+          <input id="search" type="search" placeholder="In allen Notizen suchen" autocomplete="off" aria-label="Suchen">
+          <div id="search-results" class="search-results" hidden></div>
+        </div>
+      </div>
 
-    <main>
+      <div class="views" role="tablist">
+        <button role="tab" data-view="home" aria-selected="true">Übersicht</button>
+        <button role="tab" data-view="notes">Notizen</button>
+        <button role="tab" data-view="learn">Fragen &amp; Quiz</button>
+        <button role="tab" data-view="cards">Karteikarten</button>
+        <button role="tab" data-view="record" class="rec">● Aufnehmen</button>
+      </div>
+
+      <div id="banner" class="banner" hidden></div>
+
+      <!-- Übersicht -->
+      <section id="view-home" class="view">
+        <div class="today">
+          <div class="panel">
+            <p id="home-lead" class="lead"></p>
+            <div class="row">
+              <button id="home-cards" class="primary big">Karteikarten lernen</button>
+              <button id="home-quiz" class="big">Quiz starten</button>
+            </div>
+            <p id="home-hint" class="hint"></p>
+          </div>
+          <div class="panel">
+            <h2>Dein Lernstand</h2>
+            <ul id="home-facts" class="facts"></ul>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="row between"><h2>Zuletzt dazugekommen</h2><button class="link" data-goto="notes">Alle Notizen</button></div>
+          <ul id="home-recent" class="doc-list"></ul>
+        </div>
+      </section>
+
       <!-- Notizen -->
-      <section id="view-notes" class="view">
-        <div class="card">
-          <div class="row between wrap">
-            <h2 id="notes-heading">Alle Notizen</h2>
-            <input id="filter" placeholder="Suchen…">
+      <section id="view-notes" class="view" hidden>
+        <div class="panel">
+          <div class="row between">
+            <h2 id="notes-count">Notizen</h2>
+            <div class="row">
+              <button id="expand-all" class="link">Alle aufklappen</button>
+              <button id="collapse-all" class="link">Alle zuklappen</button>
+            </div>
           </div>
           <div id="doc-tree"></div>
         </div>
-
-        <div class="card">
-          <h2>📄 OneNote</h2>
+        <div class="panel flat">
+          <h2>Notizen hinzufügen</h2>
           <div id="onenote-box" hidden>
-            <p class="hint">Holt alle Abschnitte aus der OneNote-App auf diesem PC. Geänderte Abschnitte werden automatisch aktualisiert.</p>
-            <div class="row wrap">
+            <div class="row">
               <button id="onenote-sync" class="primary">OneNote synchronisieren</button>
               <span id="onenote-status" class="hint"></span>
             </div>
+            <p class="hint">Holt alle Abschnitte aus der OneNote-App auf diesem PC. Geänderte Abschnitte werden automatisch aktualisiert.</p>
           </div>
-          <details id="pdf-manual">
-            <summary>PDFs oder Text selbst hinzufügen</summary>
-            <input type="file" id="pdf-files" accept=".pdf" multiple>
-            <button id="pdf-upload">PDFs importieren</button>
-            <input id="note-title" placeholder="Titel">
-            <textarea id="note-text" rows="5" placeholder="Text hier einfügen…"></textarea>
-            <button id="note-save">Text speichern</button>
-            <p class="hint">Wird im gerade gewählten Fach gespeichert.</p>
+          <details>
+            <summary>PDFs hochladen oder Text einfügen</summary>
+            <div class="stack" style="margin-top:10px">
+              <div class="row"><input type="file" id="pdf-files" accept=".pdf" multiple style="flex:1"><button id="pdf-upload">PDFs hochladen</button></div>
+              <input id="note-title" placeholder="Titel der Notiz">
+              <textarea id="note-text" rows="5" placeholder="Text hier einfügen"></textarea>
+              <button id="note-save">Notiz speichern</button>
+              <p class="hint">Wird im gerade gewählten Fach gespeichert.</p>
+            </div>
           </details>
         </div>
       </section>
 
-      <!-- Detail -->
+      <!-- Eine Notiz -->
       <section id="view-doc" class="view" hidden>
-        <button id="back" class="link">← Zurück</button>
-        <div class="card">
-          <div class="row between wrap">
-            <h2 id="doc-title"></h2>
+        <button id="back" class="link">← Zurück zu den Notizen</button>
+        <div class="panel">
+          <div class="doc-head row between">
+            <div>
+              <h2 id="doc-title"></h2>
+              <p id="doc-meta" class="hint"></p>
+            </div>
             <div class="row">
-              <a id="doc-file" class="button" target="_blank" hidden>📄 Original öffnen</a>
+              <label class="row" style="gap:6px">Fach <select id="doc-subject" style="width:auto;margin:0"></select></label>
               <button id="doc-delete" class="danger">Löschen</button>
             </div>
           </div>
-          <p id="doc-meta" class="hint"></p>
-          <label class="row small">Fach:
-            <select id="doc-subject"></select>
-          </label>
-          <div class="row wrap">
+          <div class="row">
             <button id="doc-summary" class="primary">Zusammenfassen</button>
-            <button id="doc-quiz">Quiz</button>
+            <button id="doc-quiz">Quiz zu dieser Notiz</button>
             <button id="doc-cards">Karteikarten erstellen</button>
             <button id="doc-retry" hidden>Nochmals verarbeiten</button>
           </div>
           <div id="doc-output"></div>
-          <div id="doc-summary-box"></div>
-          <details id="doc-clean-box"><summary>Bereinigter Text</summary><pre id="doc-clean"></pre></details>
-          <details id="doc-raw-box"><summary>Originaltext / Transkript</summary><pre id="doc-raw"></pre></details>
-        </div>
-      </section>
-
-      <!-- Aufnehmen -->
-      <section id="view-record" class="view" hidden>
-        <div class="card">
-          <h2>🎙️ Unterricht aufnehmen</h2>
-          <label class="small">Fach</label>
-          <select id="rec-subject"></select>
-          <input id="rec-subject-new" placeholder="Name des neuen Fachs" hidden>
-          <input id="rec-title" placeholder="Thema, z. B. Brüche addieren">
-          <div class="row">
-            <button id="rec-start" class="primary">Aufnahme starten</button>
-            <button id="rec-stop" hidden>Stopp &amp; speichern</button>
-            <span id="rec-time"></span>
+          <div class="doc-tabs" role="tablist">
+            <button role="tab" data-tab="summary">Zusammenfassung</button>
+            <button role="tab" data-tab="text">Text</button>
+            <button role="tab" data-tab="original">Original</button>
           </div>
-          <p class="hint">Fenster offen lassen und Laptop nicht zuklappen. Bitte vorher das Einverständnis der Lehrperson einholen.</p>
-          <details>
-            <summary>Oder Audiodatei hochladen</summary>
-            <input type="file" id="audio-file" accept="audio/*,video/mp4,.m4a,.mp3,.wav,.webm,.ogg">
-            <button id="audio-upload">Hochladen</button>
-          </details>
+          <div id="doc-pane" class="reader"></div>
         </div>
       </section>
 
-      <!-- Lernen -->
+      <!-- Fragen & Quiz -->
       <section id="view-learn" class="view" hidden>
-        <div class="card">
-          <h2 id="learn-heading">💬 Lernen</h2>
-          <div class="row wrap">
-            <button id="subject-quiz" class="primary">Quiz über das Fach</button>
-            <button id="subject-cards">Karteikarten aus dem Fach erstellen</button>
-          </div>
-          <div id="learn-output"></div>
-        </div>
-        <div class="card">
+        <div class="panel">
           <h2>Frag deine Notizen</h2>
-          <div id="chat"></div>
-          <form id="ask-form" class="row">
-            <input id="ask-input" placeholder="z. B. Was ist der Unterschied zwischen Mitose und Meiose?" autocomplete="off">
+          <p id="learn-scope" class="hint"></p>
+          <div id="chat" class="chat" aria-live="polite"></div>
+          <form id="ask-form" class="ask">
+            <input id="ask-input" placeholder="z. B. Wie rechne ich eine Binärzahl ins Dezimalsystem um?" autocomplete="off">
             <button class="primary">Fragen</button>
           </form>
+          <button id="chat-clear" class="link" hidden>Neues Gespräch</button>
+        </div>
+        <div class="panel">
+          <div class="row between">
+            <h2>Quiz</h2>
+            <div class="row">
+              <select id="quiz-n" style="width:auto;margin:0" aria-label="Anzahl Fragen">
+                <option value="5">5 Fragen</option><option value="8" selected>8 Fragen</option><option value="12">12 Fragen</option>
+              </select>
+              <button id="subject-quiz" class="primary">Quiz starten</button>
+            </div>
+          </div>
+          <div id="quiz-box"><p class="hint">Die Fragen kommen aus zufälligen Stellen deiner Notizen im gewählten Fach.</p></div>
         </div>
       </section>
 
       <!-- Karteikarten -->
       <section id="view-cards" class="view" hidden>
-        <div class="card">
-          <h2 id="cards-heading">🃏 Karteikarten</h2>
+        <div class="panel">
           <div id="flashcard-area"></div>
+        </div>
+        <div class="panel flat">
+          <div class="row between">
+            <h2 id="cards-count">Alle Karten</h2>
+            <div class="row">
+              <button id="subject-cards">Neue Karten aus dem Fach erstellen</button>
+              <a id="cards-export" class="button" href="/api/flashcards/export.csv">Für Anki exportieren</a>
+            </div>
+          </div>
+          <details id="card-list-box">
+            <summary>Karten ansehen und bearbeiten</summary>
+            <table class="card-table"><tbody id="card-list"></tbody></table>
+          </details>
+        </div>
+      </section>
+
+      <!-- Aufnehmen -->
+      <section id="view-record" class="view" hidden>
+        <div class="panel">
+          <h2>Lektion aufnehmen</h2>
+          <div class="row" style="align-items:flex-start">
+            <div style="flex:1;min-width:200px">
+              <label for="rec-subject">Fach</label>
+              <select id="rec-subject"></select>
+              <input id="rec-subject-new" placeholder="Name des neuen Fachs" hidden>
+            </div>
+            <div style="flex:2;min-width:220px">
+              <label for="rec-title">Thema</label>
+              <input id="rec-title" placeholder="z. B. Brüche addieren">
+            </div>
+          </div>
+          <div class="recorder">
+            <button id="rec-btn" class="rec-btn" aria-label="Aufnahme starten"></button>
+            <span id="rec-time" class="rec-time">0:00</span>
+            <span id="rec-state" class="hint">Tippe auf den roten Knopf, um die Aufnahme zu starten.</span>
+          </div>
+          <p class="hint">Lass das Fenster offen und den Laptop aufgeklappt. Frag vorher deine Lehrperson, ob du aufnehmen darfst.
+            Nach der Aufnahme macht die App daraus Text, eine Zusammenfassung und Karteikarten.</p>
+          <details>
+            <summary>Audiodatei hochladen</summary>
+            <div class="row" style="margin-top:8px"><input type="file" id="audio-file" accept="audio/*,video/mp4,.m4a,.mp3,.wav,.webm,.ogg" style="flex:1"><button id="audio-upload">Hochladen</button></div>
+          </details>
         </div>
       </section>
 
       <!-- Einstellungen -->
       <section id="view-settings" class="view" hidden>
-        <div class="card">
-          <h2>⚙️ KI-Einstellungen (OpenRouter)</h2>
-          <p class="hint">Die KI läuft über <a href="https://openrouter.ai" target="_blank">OpenRouter</a> im Internet, damit dein Laptop nicht überlastet wird.
-            Dafür werden die Notiz-Auszüge, zu denen du etwas fragst, an OpenRouter geschickt.</p>
-          <ol class="hint">
-            <li>Auf <a href="https://openrouter.ai" target="_blank">openrouter.ai</a> ein Konto erstellen.</li>
-            <li>Unter <a href="https://openrouter.ai/settings/keys" target="_blank">Keys</a> einen neuen Schlüssel erstellen und hier einfügen.</li>
-            <li>Ein Modell wählen. Gratis-Modelle haben ein Tageslimit, mit etwas Guthaben geht mehr.</li>
-          </ol>
-          <label class="small">OpenRouter-Schlüssel <span id="key-hint" class="hint"></span></label>
+        <div class="panel">
+          <h2>KI über OpenRouter</h2>
+          <p class="hint">Die KI rechnet im Internet, damit dein Laptop frei bleibt. Dafür werden die Notiz-Stellen, zu denen du etwas fragst, an OpenRouter geschickt.</p>
+          <label for="set-key">OpenRouter-Schlüssel <span id="key-hint" class="hint"></span></label>
           <input id="set-key" type="password" placeholder="sk-or-…" autocomplete="off">
-          <label class="small">KI-Modell</label>
-          <div class="row">
-            <select id="set-model"><option value="">Wird geladen…</option></select>
-            <label class="row small nowrap"><input type="checkbox" id="only-free" checked> nur gratis</label>
-          </div>
-          <label class="small">Bild-Modell (für Handschrift, Bilder und Scans in OneNote-PDFs)</label>
+          <label for="set-model">Modell für Antworten, Quiz und Karteikarten</label>
+          <select id="set-model"><option value="">Wird geladen…</option></select>
+          <label for="set-vision">Modell für Handschrift und Bilder in PDFs</label>
           <select id="set-vision"><option value="">Wird geladen…</option></select>
-          <div class="row wrap">
+          <label class="row" style="font-weight:400"><input type="checkbox" id="only-free" checked> Nur Gratis-Modelle zeigen</label>
+          <div class="row" style="margin-top:10px">
             <button id="set-save" class="primary">Speichern</button>
-            <button id="set-test">Testen</button>
+            <button id="set-test">Verbindung testen</button>
             <span id="set-result" class="hint"></span>
           </div>
         </div>
-        <div class="card">
-          <h2>🔄 Notizen neu verarbeiten</h2>
-          <p class="hint">Nach dem Wählen eines Bild-Modells: alle PDFs neu einlesen, damit Handschrift und Bilder erkannt werden.
-            Jede Seite mit Bild braucht eine KI-Anfrage. Bei Gratis-Modellen gilt ein Tageslimit; was nicht klappt, kannst du später nochmals versuchen.</p>
-          <div class="row wrap">
+        <div class="panel flat">
+          <h2>Notizen neu verarbeiten</h2>
+          <p class="hint">Nach dem Wählen eines Bild-Modells alle PDFs neu einlesen, damit Handschrift und Bilder erkannt werden.
+            Gratis-Modelle haben ein Tageslimit. Was nicht klappt, kannst du später nochmals versuchen.</p>
+          <div class="row">
             <button id="reprocess-pdfs">Alle PDFs neu einlesen</button>
             <button id="reprocess-errors">Fehlgeschlagene nochmals versuchen</button>
-            <span id="reprocess-result" class="hint"></span>
           </div>
         </div>
       </section>
-    </main>
-  </div>
-
-  <script src="app.js"></script>
+    </div>
+  </main>
+</div>
+<div id="toasts" class="toasts" aria-live="polite"></div>
+<script src="app.js"></script>
 </body>
 </html>

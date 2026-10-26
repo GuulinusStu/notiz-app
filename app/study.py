@@ -42,14 +42,22 @@ def search(query: str, k: int = 6, subject: str | None = None) -> list[dict]:
              "score": float(sims[i])} for i in order]
 
 
-def answer(question: str, subject: str | None = None) -> dict:
-    hits = search(question, subject=subject)
+def answer(question: str, subject: str | None = None, history: list[dict] | None = None) -> dict:
+    # Bei Nachfragen („und wie geht das umgekehrt?“) hilft die vorherige Frage beim Suchen.
+    previous = [h["question"] for h in (history or [])[-2:] if h.get("question")]
+    hits = search(" ".join(previous[-1:] + [question]), subject=subject)
     if not hits:
         where = f"im Fach „{subject}“" if subject else ""
         return {"answer": f"Ich habe {where} noch keine Notizen, in denen ich nachschauen kann. "
                           "Lade zuerst Notizen hoch oder nimm eine Lektion auf.", "sources": []}
     context = "\n\n".join(f"[{i}] ({h['title']})\n{h['text']}" for i, h in enumerate(hits, start=1))
-    text = llm.ask(ANSWER_PROMPT, f"Auszüge:\n{context}\n\nFrage: {question}")
+    messages = [{"role": "system", "content": ANSWER_PROMPT}]
+    for turn in (history or [])[-3:]:
+        if turn.get("question") and turn.get("answer"):
+            messages += [{"role": "user", "content": turn["question"]},
+                         {"role": "assistant", "content": turn["answer"]}]
+    messages.append({"role": "user", "content": f"Auszüge:\n{context}\n\nFrage: {question}"})
+    text = llm.chat(messages)
     return {"answer": text, "sources": [{"n": i, **h} for i, h in enumerate(hits, start=1)]}
 
 
@@ -121,3 +129,21 @@ def make_flashcards(doc: dict | None = None, n: int = 10, subject: str | None = 
     if not created:
         raise llm.LLMError("Die KI hat keine brauchbaren Karteikarten erstellt. Bitte nochmals versuchen.")
     return created
+
+
+def find(query: str, subject: str | None = None, limit: int = 12) -> list[dict]:
+    """Suche über alle Notizen: Titel-Treffer zuerst, dann inhaltlich passende Stellen (eine pro Notiz)."""
+    q = query.lower()
+    results, seen = [], set()
+    for d in db.list_documents():
+        if (subject is None or d["subject"] == subject) and q in d["title"].lower():
+            results.append({"doc_id": d["id"], "title": d["title"], "subject": d["subject"], "snippet": "", "kind": d["kind"]})
+            seen.add(d["id"])
+    for hit in search(query, k=40, subject=subject):
+        if hit["doc_id"] in seen or hit["score"] < 0.25:
+            continue
+        seen.add(hit["doc_id"])
+        doc = db.get_document(hit["doc_id"]) or {}
+        results.append({"doc_id": hit["doc_id"], "title": hit["title"], "subject": doc.get("subject", ""),
+                        "snippet": hit["text"][:240], "kind": doc.get("kind", "")})
+    return results[:limit]

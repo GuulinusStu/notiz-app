@@ -30,6 +30,20 @@ CREATE TABLE IF NOT EXISTS chunks (
   embedding BLOB
 );
 CREATE INDEX IF NOT EXISTS chunks_doc ON chunks(doc_id);
+CREATE TABLE IF NOT EXISTS reviews (        -- Lernverlauf für Statistik und Lernserie
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  card_id INTEGER,
+  subject TEXT NOT NULL DEFAULT '',
+  grade INTEGER NOT NULL,
+  ts REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS quiz_results (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  subject TEXT NOT NULL DEFAULT '',
+  score INTEGER NOT NULL,
+  total INTEGER NOT NULL,
+  ts REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -278,3 +292,86 @@ def update_flashcard(card_id: int, due: float, interval_days: float, ease: float
             "UPDATE flashcards SET due = ?, interval_days = ?, ease = ?, reps = ? WHERE id = ?",
             (due, interval_days, ease, reps, card_id),
         )
+
+
+def list_flashcards(subject: str | None = None) -> list[dict]:
+    sql = ("SELECT flashcards.*, documents.title AS doc_title, documents.subject AS subject FROM flashcards"
+           " LEFT JOIN documents ON documents.id = flashcards.doc_id")
+    args: tuple = ()
+    if subject is not None:
+        sql += " WHERE documents.subject = ?"
+        args = (subject,)
+    with session() as c:
+        return [dict(r) for r in c.execute(sql + " ORDER BY flashcards.id DESC", args)]
+
+
+def edit_flashcard(card_id: int, front: str, back: str) -> None:
+    with session() as c:
+        c.execute("UPDATE flashcards SET front = ?, back = ? WHERE id = ?", (front, back, card_id))
+
+
+def delete_flashcard(card_id: int) -> None:
+    with session() as c:
+        c.execute("DELETE FROM flashcards WHERE id = ?", (card_id,))
+
+
+# --- Lernverlauf -------------------------------------------------------------
+
+def log_review(card_id: int, subject: str, grade: int) -> None:
+    with session() as c:
+        c.execute("INSERT INTO reviews (card_id, subject, grade, ts) VALUES (?, ?, ?, ?)",
+                  (card_id, subject or "", grade, time.time()))
+
+
+def log_quiz(subject: str, score: int, total: int) -> None:
+    with session() as c:
+        c.execute("INSERT INTO quiz_results (subject, score, total, ts) VALUES (?, ?, ?, ?)",
+                  (subject or "", score, total, time.time()))
+
+
+def _day(ts: float) -> str:
+    return time.strftime("%Y-%m-%d", time.localtime(ts))
+
+
+def streak_days(timestamps: list[float], now: float | None = None) -> int:
+    """Wie viele Tage in Folge (bis heute oder gestern) gelernt wurde."""
+    now = time.time() if now is None else now
+    days = {_day(t) for t in timestamps}
+    day = now if _day(now) in days else now - 86400
+    count = 0
+    while _day(day) in days:
+        count += 1
+        day -= 86400
+    return count
+
+
+def stats(subject: str | None = None) -> dict:
+    where, args = ("", ()) if subject is None else (" WHERE subject = ?", (subject,))
+    today_start = time.mktime(time.localtime()[:3] + (0, 0, 0, 0, 0, -1))
+    with session() as c:
+        docs = c.execute(f"SELECT kind, status, count(*) AS n FROM documents{where} GROUP BY kind, status", args).fetchall()
+        learn_ts = [r[0] for r in c.execute(f"SELECT ts FROM reviews{where}", args)]
+        learn_ts += [r[0] for r in c.execute(f"SELECT ts FROM quiz_results{where}", args)]
+        reviews_today = c.execute(
+            f"SELECT count(*) FROM reviews{where}{' AND' if where else ' WHERE'} ts >= ?", (*args, today_start)).fetchone()[0]
+        quiz = c.execute(f"SELECT sum(score), sum(total) FROM quiz_results{where}", args).fetchone()
+        recent = c.execute(
+            f"SELECT id, title, kind, subject, status, created_at FROM documents{where}"
+            " ORDER BY created_at DESC LIMIT 6", args).fetchall()
+    due = due_flashcards(limit=10000, subject=subject)
+    cards_total = len(list_flashcards(subject))
+    by_kind = {}
+    for r in docs:
+        by_kind[r["kind"]] = by_kind.get(r["kind"], 0) + r["n"]
+    return {
+        "notes": sum(by_kind.values()),
+        "lessons": by_kind.get("lesson", 0),
+        "processing": sum(r["n"] for r in docs if r["status"] in ("pending", "processing")),
+        "errors": sum(r["n"] for r in docs if r["status"] == "error"),
+        "cards_total": cards_total,
+        "cards_due": len(due),
+        "reviews_today": reviews_today,
+        "streak": streak_days(learn_ts),
+        "quiz_percent": round(100 * quiz[0] / quiz[1]) if quiz[1] else None,
+        "recent": [dict(r) for r in recent],
+    }

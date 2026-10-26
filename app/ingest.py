@@ -215,6 +215,13 @@ def process(doc_id: int) -> None:
             db.update_document(doc_id, clean_text=clean)
             db.update_document(doc_id, summary=summarize(clean, progress))
             index(doc_id, clean, progress)
+            if clean.strip():
+                progress("Erstelle Karteikarten…")
+                try:
+                    from . import study
+                    study.make_flashcards(db.get_document(doc_id), n=8)
+                except llm.LLMError:
+                    pass  # Karteikarten sind ein Bonus; die Lektion ist trotzdem fertig
         else:
             raise ValueError(f"Unbekannte Art: {doc['kind']}")
         db.update_document(doc_id, status="ready", progress="")

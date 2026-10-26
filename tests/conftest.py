@@ -53,3 +53,4 @@ def fake_ask(system, user, **kwargs):
 def fake_llm(monkeypatch):
     monkeypatch.setattr(llm, "embed", fake_embed)
     monkeypatch.setattr(llm, "ask", fake_ask)
+    monkeypatch.setattr(llm, "chat", lambda messages, **k: fake_ask(messages[0]["content"], messages[-1]["content"]))
