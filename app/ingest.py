@@ -151,7 +151,7 @@ def summarize(text: str, progress: ProgressFn = lambda _: None) -> str:
             notes.append(llm.ask(PART_SUMMARY_PROMPT, part))
         text = "\n\n".join(notes)
     progress("Schreibe Zusammenfassung…")
-    return llm.ask(SUMMARY_PROMPT, text, num_ctx=16384)
+    return llm.ask(SUMMARY_PROMPT, text)
 
 
 def index(doc_id: int, text: str, progress: ProgressFn) -> None:
@@ -163,6 +163,12 @@ def index(doc_id: int, text: str, progress: ProgressFn) -> None:
     vectors = llm.embed(chunks)
     db.replace_chunks(doc_id, [(c, np.asarray(v, dtype=np.float32).tobytes())
                                for c, v in zip(chunks, vectors)])
+
+
+def reindex(doc_id: int) -> None:
+    doc = db.get_document(doc_id)
+    if doc and doc["status"] == "ready":
+        index(doc_id, doc["clean_text"] or doc["raw_text"], lambda _msg: None)
 
 
 def process(doc_id: int) -> None:

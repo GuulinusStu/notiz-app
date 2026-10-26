@@ -30,6 +30,14 @@ CREATE TABLE IF NOT EXISTS chunks (
   embedding BLOB
 );
 CREATE INDEX IF NOT EXISTS chunks_doc ON chunks(doc_id);
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS subject_alias (  -- OneNote-Notizbuch -> Fach
+  source TEXT PRIMARY KEY,
+  subject TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS sync_state (     -- z. B. leere OneNote-Abschnitte, die nichts zu importieren haben
   external_id TEXT PRIMARY KEY,
   modified TEXT NOT NULL
@@ -115,6 +123,7 @@ def list_documents() -> list[dict]:
     with session() as c:
         rows = c.execute(
             "SELECT id, title, kind, subject, status, progress, error, created_at, external_id,"
+            " source_path IS NOT NULL AS has_file,"
             " length(summary) > 0 AS has_summary FROM documents ORDER BY created_at DESC"
         ).fetchall()
         return [dict(r) for r in rows]
@@ -141,6 +150,11 @@ def set_sync_state(external_id: str, modified: str) -> None:
         c.execute("INSERT OR REPLACE INTO sync_state (external_id, modified) VALUES (?, ?)", (external_id, modified))
 
 
+def ready_documents() -> list[int]:
+    with session() as c:
+        return [r["id"] for r in c.execute("SELECT id FROM documents WHERE status = 'ready' ORDER BY id")]
+
+
 def documents_with_status(*statuses: str) -> list[int]:
     marks = ",".join("?" * len(statuses))
     with session() as c:
@@ -156,6 +170,45 @@ def delete_document(doc_id: int) -> dict | None:
     return doc
 
 
+# --- Fächer -----------------------------------------------------------------
+
+def list_subjects() -> list[dict]:
+    with session() as c:
+        rows = c.execute(
+            "SELECT subject, count(*) AS count FROM documents GROUP BY subject ORDER BY subject = '', lower(subject)"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def rename_subject(old: str, new: str) -> int:
+    """Benennt ein Fach um (oder legt zwei zusammen) und merkt sich das für künftige OneNote-Importe."""
+    with session() as c:
+        n = c.execute("UPDATE documents SET subject = ? WHERE subject = ?", (new, old)).rowcount
+        c.execute("UPDATE subject_alias SET subject = ? WHERE subject = ?", (new, old))
+        c.execute("INSERT OR REPLACE INTO subject_alias (source, subject) VALUES (?, ?)", (old, new))
+        c.execute("DELETE FROM subject_alias WHERE source = subject")
+        return n
+
+
+def subject_for(source: str) -> str:
+    with session() as c:
+        row = c.execute("SELECT subject FROM subject_alias WHERE source = ?", (source,)).fetchone()
+        return row["subject"] if row else source
+
+
+# --- Einstellungen -----------------------------------------------------------
+
+def get_setting(key: str, default: str = "") -> str:
+    with session() as c:
+        row = c.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else default
+
+
+def set_setting(key: str, value: str) -> None:
+    with session() as c:
+        c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
+
+
 # --- Textabschnitte ----------------------------------------------------------
 
 def replace_chunks(doc_id: int, chunks: list[tuple[str, bytes | None]]) -> None:
@@ -167,13 +220,15 @@ def replace_chunks(doc_id: int, chunks: list[tuple[str, bytes | None]]) -> None:
         )
 
 
-def all_chunks() -> list[dict]:
+def all_chunks(subject: str | None = None) -> list[dict]:
+    sql = ("SELECT chunks.id, chunks.doc_id, chunks.text, chunks.embedding, documents.title, documents.subject"
+           " FROM chunks JOIN documents ON documents.id = chunks.doc_id WHERE chunks.embedding IS NOT NULL")
+    args: tuple = ()
+    if subject is not None:
+        sql += " AND documents.subject = ?"
+        args = (subject,)
     with session() as c:
-        rows = c.execute(
-            "SELECT chunks.id, chunks.doc_id, chunks.text, chunks.embedding, documents.title"
-            " FROM chunks JOIN documents ON documents.id = chunks.doc_id"
-            " WHERE chunks.embedding IS NOT NULL"
-        ).fetchall()
+        rows = c.execute(sql, args).fetchall()
         return [dict(r) for r in rows]
 
 
@@ -189,14 +244,15 @@ def add_flashcards(doc_id: int | None, cards: list[tuple[str, str]]) -> int:
     return len(cards)
 
 
-def due_flashcards(limit: int = 50) -> list[dict]:
+def due_flashcards(limit: int = 50, subject: str | None = None) -> list[dict]:
+    sql = ("SELECT flashcards.*, documents.title AS doc_title, documents.subject AS subject FROM flashcards"
+           " LEFT JOIN documents ON documents.id = flashcards.doc_id WHERE due <= ?")
+    args: list = [time.time()]
+    if subject is not None:
+        sql += " AND documents.subject = ?"
+        args.append(subject)
     with session() as c:
-        rows = c.execute(
-            "SELECT flashcards.*, documents.title AS doc_title FROM flashcards"
-            " LEFT JOIN documents ON documents.id = flashcards.doc_id"
-            " WHERE due <= ? ORDER BY due LIMIT ?",
-            (time.time(), limit),
-        ).fetchall()
+        rows = c.execute(sql + " ORDER BY due LIMIT ?", (*args, limit)).fetchall()
         return [dict(r) for r in rows]
 
 
@@ -204,7 +260,10 @@ def flashcard_counts() -> dict:
     with session() as c:
         total = c.execute("SELECT count(*) FROM flashcards").fetchone()[0]
         due = c.execute("SELECT count(*) FROM flashcards WHERE due <= ?", (time.time(),)).fetchone()[0]
-        return {"total": total, "due": due}
+        per_subject = c.execute(
+            "SELECT documents.subject, count(*) FROM flashcards JOIN documents ON documents.id = flashcards.doc_id"
+            " WHERE due <= ? GROUP BY documents.subject", (time.time(),)).fetchall()
+        return {"total": total, "due": due, "due_by_subject": {r[0]: r[1] for r in per_subject}}
 
 
 def get_flashcard(card_id: int) -> dict | None:

@@ -3,7 +3,8 @@
 Eine Lern-App für den eigenen Laptop: OneNote-Notizen importieren, Unterricht aufnehmen,
 und dann mit einer KI lernen (Fragen stellen, Zusammenfassungen, Quiz, Karteikarten).
 
-**Alles läuft lokal und gratis.** Aufnahmen und Notizen verlassen den Laptop nicht.
+Die KI (Antworten, Zusammenfassungen, Quiz) läuft über **OpenRouter** im Internet, damit der Laptop
+nicht überlastet wird. Spracherkennung (Whisper) und Suche laufen lokal.
 
 ## Was die App kann
 
@@ -12,21 +13,22 @@ und dann mit einer KI lernen (Fragen stellen, Zusammenfassungen, Quiz, Karteikar
   Whisper wandelt die Aufnahme in Text um, die KI bereinigt ihn (Schweizerdeutsch → Hochdeutsch,
   Pausen und Gruppengespräche raus) und schreibt eine Zusammenfassung.
 - **Fragen stellen:** „Was war nochmal …?“ – die KI sucht in allen Notizen und nennt die Quellen.
-- **Quiz und Karteikarten:** Aus jeder Notiz ein Quiz oder Karteikarten erstellen. Karteikarten
+- **Fächer:** Links ein Fach wählen. Notizen, Fragen, Quiz und Karteikarten beziehen sich dann nur auf
+  dieses Fach. OneNote-Notizbücher werden automatisch zu Fächern, mit ✏️ kann man sie umbenennen
+  oder zusammenlegen. Beim Aufnehmen wählt man das Fach aus.
+- **Quiz und Karteikarten:** Für eine einzelne Notiz oder für ein ganzes Fach. Karteikarten
   werden nach einem Wiederholungsplan abgefragt (wie bei Anki).
 
 ## Einrichtung (Windows, einmalig)
 
 1. **Python installieren:** https://www.python.org/downloads/ – beim Installieren
    **„Add python.exe to PATH“** ankreuzen.
-2. **Ollama installieren:** https://ollama.com/download – danach läuft Ollama im Hintergrund.
-3. **KI-Modelle herunterladen:** Eingabeaufforderung (cmd) öffnen und eingeben:
-   ```
-   ollama pull qwen3:14b
-   ollama pull bge-m3
-   ```
-   Das sind zusammen etwa 10 GB, also etwas Geduld.
-4. **App herunterladen:** Auf GitHub auf „Code → Download ZIP“ klicken und entpacken
+2. **OpenRouter einrichten:** Auf https://openrouter.ai ein Konto erstellen und unter
+   https://openrouter.ai/settings/keys einen Schlüssel erstellen. Den Schlüssel trägst du später
+   in der App unter ⚙️ Einstellungen ein (nicht in einen Chat oder eine Datei kopieren).
+   Gratis-Modelle haben ein Tageslimit. Mit ein paar Franken Guthaben gibt es mehr Anfragen und
+   bessere Modelle.
+3. **App herunterladen:** Auf GitHub auf „Code → Download ZIP“ klicken und entpacken
    (oder mit `git clone`).
 
 ## Starten
@@ -36,7 +38,8 @@ danach öffnet sich die App im Browser unter http://127.0.0.1:8000.
 
 Das schwarze Fenster muss offen bleiben, solange du die App benutzt.
 
-Bei der ersten Aufnahme wird das Spracherkennungsmodell (ca. 1,6 GB) heruntergeladen.
+Beim ersten Start wird das kleine Suchmodell (ca. 250 MB) heruntergeladen, bei der ersten Aufnahme
+das Spracherkennungsmodell (ca. 1,6 GB).
 
 ## OneNote importieren
 
@@ -67,8 +70,9 @@ Hinweis: Getippter Text wird gelesen. Handschrift und Text in Bildern werden noc
 
 | Variable | Standard | Bedeutung |
 |---|---|---|
-| `NOTIZAPP_CHAT_MODEL` | `qwen3:14b` | KI-Modell für Antworten (kleiner/schneller: `qwen3:8b`) |
-| `NOTIZAPP_EMBED_MODEL` | `bge-m3` | Modell für die Suche |
+| `OPENROUTER_API_KEY` | – | Schlüssel, falls nicht in der App eingetragen |
+| `NOTIZAPP_CHAT_MODEL` | – | KI-Modell, falls nicht in der App gewählt |
+| `NOTIZAPP_EMBED_MODEL` | `paraphrase-multilingual-MiniLM-L12-v2` | Lokales Modell für die Suche |
 | `NOTIZAPP_WHISPER_MODEL` | `large-v3-turbo` | Spracherkennung (schneller, ungenauer: `small`) |
 | `NOTIZAPP_DATA` | `data/` | Wo Notizen und Aufnahmen gespeichert werden |
 | `NOTIZAPP_PORT` | `8000` | Port im Browser |

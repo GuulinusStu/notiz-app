@@ -11,20 +11,90 @@
     <h1>📚 Notiz-App</h1>
     <nav>
       <button data-view="notes" class="active">Notizen</button>
-      <button data-view="ask">Fragen</button>
+      <button data-view="record">Aufnehmen</button>
+      <button data-view="learn">Lernen</button>
       <button data-view="cards">Karteikarten <span id="due-badge" class="badge" hidden></span></button>
+      <button data-view="settings" title="Einstellungen">⚙️</button>
     </nav>
   </header>
   <div id="status-bar" hidden></div>
 
-  <main>
-    <!-- Notizen -->
-    <section id="view-notes" class="view">
-      <div class="grid">
+  <div class="layout">
+    <!-- Fächer -->
+    <aside>
+      <div class="row between"><h2>Fächer</h2></div>
+      <ul id="subject-list" class="subject-list"></ul>
+      <p class="hint small">✏️ = Fach umbenennen. Gleicher Name = Fächer zusammenlegen.</p>
+    </aside>
+
+    <main>
+      <!-- Notizen -->
+      <section id="view-notes" class="view">
+        <div class="card">
+          <div class="row between wrap">
+            <h2 id="notes-heading">Alle Notizen</h2>
+            <input id="filter" placeholder="Suchen…">
+          </div>
+          <div id="doc-tree"></div>
+        </div>
+
+        <div class="card">
+          <h2>📄 OneNote</h2>
+          <div id="onenote-box" hidden>
+            <p class="hint">Holt alle Abschnitte aus der OneNote-App auf diesem PC. Geänderte Abschnitte werden automatisch aktualisiert.</p>
+            <div class="row wrap">
+              <button id="onenote-sync" class="primary">OneNote synchronisieren</button>
+              <span id="onenote-status" class="hint"></span>
+            </div>
+          </div>
+          <details id="pdf-manual">
+            <summary>PDFs oder Text selbst hinzufügen</summary>
+            <input type="file" id="pdf-files" accept=".pdf" multiple>
+            <button id="pdf-upload">PDFs importieren</button>
+            <input id="note-title" placeholder="Titel">
+            <textarea id="note-text" rows="5" placeholder="Text hier einfügen…"></textarea>
+            <button id="note-save">Text speichern</button>
+            <p class="hint">Wird im gerade gewählten Fach gespeichert.</p>
+          </details>
+        </div>
+      </section>
+
+      <!-- Detail -->
+      <section id="view-doc" class="view" hidden>
+        <button id="back" class="link">← Zurück</button>
+        <div class="card">
+          <div class="row between wrap">
+            <h2 id="doc-title"></h2>
+            <div class="row">
+              <a id="doc-file" class="button" target="_blank" hidden>📄 Original öffnen</a>
+              <button id="doc-delete" class="danger">Löschen</button>
+            </div>
+          </div>
+          <p id="doc-meta" class="hint"></p>
+          <label class="row small">Fach:
+            <select id="doc-subject"></select>
+          </label>
+          <div class="row wrap">
+            <button id="doc-summary" class="primary">Zusammenfassen</button>
+            <button id="doc-quiz">Quiz</button>
+            <button id="doc-cards">Karteikarten erstellen</button>
+            <button id="doc-retry" hidden>Nochmals verarbeiten</button>
+          </div>
+          <div id="doc-output"></div>
+          <div id="doc-summary-box"></div>
+          <details id="doc-clean-box"><summary>Bereinigter Text</summary><pre id="doc-clean"></pre></details>
+          <details id="doc-raw-box"><summary>Originaltext / Transkript</summary><pre id="doc-raw"></pre></details>
+        </div>
+      </section>
+
+      <!-- Aufnehmen -->
+      <section id="view-record" class="view" hidden>
         <div class="card">
           <h2>🎙️ Unterricht aufnehmen</h2>
-          <input id="rec-title" placeholder="Titel, z. B. Mathe – Brüche">
-          <input id="rec-subject" placeholder="Fach (optional)">
+          <label class="small">Fach</label>
+          <select id="rec-subject"></select>
+          <input id="rec-subject-new" placeholder="Name des neuen Fachs" hidden>
+          <input id="rec-title" placeholder="Thema, z. B. Brüche addieren">
           <div class="row">
             <button id="rec-start" class="primary">Aufnahme starten</button>
             <button id="rec-stop" hidden>Stopp &amp; speichern</button>
@@ -37,83 +107,63 @@
             <button id="audio-upload">Hochladen</button>
           </details>
         </div>
+      </section>
 
+      <!-- Lernen -->
+      <section id="view-learn" class="view" hidden>
         <div class="card">
-          <h2>📄 OneNote importieren</h2>
-          <div id="onenote-box" hidden>
-            <p class="hint">Exportiert alle Abschnitte aus der OneNote-App auf diesem PC. Geänderte Abschnitte werden beim nächsten Mal automatisch aktualisiert.</p>
-            <div class="row wrap">
-              <button id="onenote-sync" class="primary">OneNote synchronisieren</button>
-              <span id="onenote-status" class="hint"></span>
-            </div>
+          <h2 id="learn-heading">💬 Lernen</h2>
+          <div class="row wrap">
+            <button id="subject-quiz" class="primary">Quiz über das Fach</button>
+            <button id="subject-cards">Karteikarten aus dem Fach erstellen</button>
           </div>
-          <details id="pdf-manual">
-          <summary>Oder PDFs selbst hochladen</summary>
-          <p class="hint">In OneNote am PC: Datei → Exportieren → Abschnitt → PDF. Du kannst mehrere PDFs auf einmal wählen.</p>
-          <input id="pdf-subject" placeholder="Fach (optional)">
-          <input type="file" id="pdf-files" accept=".pdf" multiple>
-          <button id="pdf-upload" class="primary">Importieren</button>
-          </details>
-          <details>
-            <summary>Oder Text einfügen</summary>
-            <input id="note-title" placeholder="Titel">
-            <textarea id="note-text" rows="6" placeholder="Text aus OneNote hier einfügen…"></textarea>
-            <button id="note-save">Speichern</button>
-          </details>
+          <div id="learn-output"></div>
         </div>
-      </div>
-
-      <div class="card">
-        <div class="row between">
-          <h2>Meine Notizen</h2>
-          <input id="filter" placeholder="Filtern…">
+        <div class="card">
+          <h2>Frag deine Notizen</h2>
+          <div id="chat"></div>
+          <form id="ask-form" class="row">
+            <input id="ask-input" placeholder="z. B. Was ist der Unterschied zwischen Mitose und Meiose?" autocomplete="off">
+            <button class="primary">Fragen</button>
+          </form>
         </div>
-        <ul id="doc-list" class="doc-list"></ul>
-      </div>
-    </section>
+      </section>
 
-    <!-- Detail -->
-    <section id="view-doc" class="view" hidden>
-      <button id="back" class="link">← Zurück</button>
-      <div class="card">
-        <div class="row between">
-          <h2 id="doc-title"></h2>
-          <button id="doc-delete" class="danger">Löschen</button>
+      <!-- Karteikarten -->
+      <section id="view-cards" class="view" hidden>
+        <div class="card">
+          <h2 id="cards-heading">🃏 Karteikarten</h2>
+          <div id="flashcard-area"></div>
         </div>
-        <p id="doc-meta" class="hint"></p>
-        <div class="row wrap">
-          <button id="doc-summary" class="primary">Zusammenfassen</button>
-          <button id="doc-quiz">Quiz starten</button>
-          <button id="doc-cards">Karteikarten erstellen</button>
-          <button id="doc-retry" hidden>Nochmals verarbeiten</button>
+      </section>
+
+      <!-- Einstellungen -->
+      <section id="view-settings" class="view" hidden>
+        <div class="card">
+          <h2>⚙️ KI-Einstellungen (OpenRouter)</h2>
+          <p class="hint">Die KI läuft über <a href="https://openrouter.ai" target="_blank">OpenRouter</a> im Internet, damit dein Laptop nicht überlastet wird.
+            Dafür werden die Notiz-Auszüge, zu denen du etwas fragst, an OpenRouter geschickt.</p>
+          <ol class="hint">
+            <li>Auf <a href="https://openrouter.ai" target="_blank">openrouter.ai</a> ein Konto erstellen.</li>
+            <li>Unter <a href="https://openrouter.ai/settings/keys" target="_blank">Keys</a> einen neuen Schlüssel erstellen und hier einfügen.</li>
+            <li>Ein Modell wählen. Gratis-Modelle haben ein Tageslimit, mit etwas Guthaben geht mehr.</li>
+          </ol>
+          <label class="small">OpenRouter-Schlüssel <span id="key-hint" class="hint"></span></label>
+          <input id="set-key" type="password" placeholder="sk-or-…" autocomplete="off">
+          <label class="small">KI-Modell</label>
+          <div class="row">
+            <select id="set-model"><option value="">Wird geladen…</option></select>
+            <label class="row small nowrap"><input type="checkbox" id="only-free" checked> nur gratis</label>
+          </div>
+          <div class="row wrap">
+            <button id="set-save" class="primary">Speichern</button>
+            <button id="set-test">Testen</button>
+            <span id="set-result" class="hint"></span>
+          </div>
         </div>
-        <div id="doc-output"></div>
-        <div id="doc-summary-box"></div>
-        <details id="doc-clean-box"><summary>Bereinigter Text</summary><pre id="doc-clean"></pre></details>
-        <details id="doc-raw-box"><summary>Originaltext / Transkript</summary><pre id="doc-raw"></pre></details>
-      </div>
-    </section>
-
-    <!-- Fragen -->
-    <section id="view-ask" class="view" hidden>
-      <div class="card">
-        <h2>💬 Frag deine Notizen</h2>
-        <div id="chat"></div>
-        <form id="ask-form" class="row">
-          <input id="ask-input" placeholder="z. B. Was ist der Unterschied zwischen Mitose und Meiose?" autocomplete="off">
-          <button class="primary">Fragen</button>
-        </form>
-      </div>
-    </section>
-
-    <!-- Karteikarten -->
-    <section id="view-cards" class="view" hidden>
-      <div class="card">
-        <h2>🃏 Karteikarten lernen</h2>
-        <div id="flashcard-area"></div>
-      </div>
-    </section>
-  </main>
+      </section>
+    </main>
+  </div>
 
   <script src="app.js"></script>
 </body>

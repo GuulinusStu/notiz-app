@@ -1,12 +1,16 @@
 "use strict";
 
 const $ = (sel) => document.querySelector(sel);
-const KIND = { pdf: "📄 PDF", lesson: "🎙️ Lektion", text: "📝 Text" };
+const KIND = { pdf: "📄", lesson: "🎙️", text: "📝" };
 const STATUS = { pending: "wartet", processing: "in Arbeit", ready: "bereit", error: "Fehler" };
+const NO_SUBJECT = "Ohne Fach";
 
 let docs = [];
+let subjects = [];
+let subject = loadSubject();   // null = alle Fächer
 let currentDoc = null;
 let pollTimer = null;
+let dueBySubject = {};
 
 // --- Hilfsfunktionen ---------------------------------------------------------
 
@@ -20,8 +24,8 @@ async function api(path, options = {}) {
   return data;
 }
 
-const postJSON = (path, body) =>
-  api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body ?? {}) });
+const postJSON = (path, body, method = "POST") =>
+  api(path, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body ?? {}) });
 
 function esc(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -31,8 +35,8 @@ function esc(s) {
 function md(text) {
   const lines = esc(text).split("\n");
   let html = "", inList = false;
+  const inline = (s) => s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
   for (const line of lines) {
-    const inline = (s) => s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
     const item = line.match(/^\s*[-*•]\s+(.*)/);
     if (item) {
       if (!inList) { html += "<ul>"; inList = true; }
@@ -56,11 +60,24 @@ async function busy(button, fn) {
   finally { button.disabled = false; button.textContent = label; }
 }
 
+function loadSubject() {
+  try { const v = localStorage.getItem("subject"); return v === null ? null : JSON.parse(v); } catch { return null; }
+}
+
+function saveSubject() {
+  try { localStorage.setItem("subject", JSON.stringify(subject)); } catch { /* egal */ }
+}
+
+const subjectName = (s) => (s === null ? "Alle Fächer" : s || NO_SUBJECT);
+const subjectQuery = () => (subject === null ? "" : `?subject=${encodeURIComponent(subject)}`);
+
 function show(view) {
   document.querySelectorAll(".view").forEach((v) => (v.hidden = v.id !== `view-${view}`));
   document.querySelectorAll("nav button").forEach((b) =>
     b.classList.toggle("active", b.dataset.view === view || (view === "doc" && b.dataset.view === "notes")));
   if (view === "cards") loadCards();
+  if (view === "settings") loadSettings();
+  if (view === "record") fillSubjectSelect($("#rec-subject"), subject ?? "", true);
 }
 
 // --- Status ------------------------------------------------------------------
@@ -70,17 +87,82 @@ async function loadStatus() {
     const s = await api("/api/status");
     const bar = $("#status-bar");
     const problems = [];
-    if (!s.ollama) problems.push("Ollama läuft nicht. Starte die Ollama-App, sonst funktionieren Fragen, Quiz und Zusammenfassungen nicht.");
-    else {
-      if (!s.chat_model_ok) problems.push(`KI-Modell fehlt: <code>ollama pull ${esc(s.chat_model)}</code>`);
-      if (!s.embed_model_ok) problems.push(`Suchmodell fehlt: <code>ollama pull ${esc(s.embed_model)}</code>`);
-    }
+    if (!s.key_set) problems.push('Die KI ist noch nicht eingerichtet. <a href="#" data-go="settings">Jetzt OpenRouter-Schlüssel eintragen</a>.');
+    else if (!s.chat_model) problems.push('Bitte ein KI-Modell wählen: <a href="#" data-go="settings">Einstellungen</a>.');
     bar.hidden = problems.length === 0;
     bar.innerHTML = problems.join("<br>");
+    dueBySubject = s.flashcards.due_by_subject || {};
+    const due = subject === null ? s.flashcards.due : (dueBySubject[subject] || 0);
     const badge = $("#due-badge");
-    badge.hidden = !s.flashcards.due;
-    badge.textContent = s.flashcards.due;
+    badge.hidden = !due;
+    badge.textContent = due;
+    renderSubjects();
   } catch { /* Server neu gestartet */ }
+}
+
+$("#status-bar").addEventListener("click", (e) => {
+  const a = e.target.closest("[data-go]");
+  if (a) { e.preventDefault(); show(a.dataset.go); }
+});
+
+// --- Fächer ------------------------------------------------------------------
+
+async function loadSubjects() {
+  subjects = await api("/api/subjects");
+  if (subject !== null && !subjects.some((s) => s.subject === subject)) { subject = null; saveSubject(); }
+  renderSubjects();
+}
+
+function renderSubjects() {
+  const total = subjects.reduce((n, s) => n + s.count, 0);
+  const items = [{ subject: null, count: total }, ...subjects];
+  $("#subject-list").innerHTML = items.map((s, i) => {
+    const due = s.subject === null ? 0 : dueBySubject[s.subject] || 0;
+    return `<li data-i="${i}" class="${s.subject === subject ? "active" : ""}">
+      <span class="name">${esc(subjectName(s.subject))}</span>
+      <span class="count">${s.count}${due ? ` · 🃏${due}` : ""}</span>
+      ${s.subject ? `<button class="icon" data-rename="${i}" title="Umbenennen">✏️</button>` : ""}
+    </li>`;
+  }).join("");
+  $("#subject-list").onclick = async (e) => {
+    const rename = e.target.closest("[data-rename]");
+    if (rename) {
+      const old = items[rename.dataset.rename].subject;
+      const name = prompt(`Neuer Name für „${old}“ (gleicher Name wie ein anderes Fach = zusammenlegen):`, old);
+      if (name && name.trim() && name.trim() !== old) {
+        await postJSON("/api/subjects/rename", { old, new: name.trim() });
+        if (subject === old) { subject = name.trim(); saveSubject(); }
+        await refreshAll();
+      }
+      return;
+    }
+    const li = e.target.closest("li[data-i]");
+    if (!li) return;
+    subject = items[li.dataset.i].subject;
+    saveSubject();
+    renderSubjects();
+    renderDocs();
+    updateHeadings();
+    loadStatus();
+    if (!$("#view-cards").hidden) loadCards();
+    if (!$("#view-doc").hidden) show("notes");
+  };
+}
+
+function updateHeadings() {
+  $("#notes-heading").textContent = subject === null ? "Alle Notizen" : subjectName(subject);
+  $("#learn-heading").textContent = `💬 Lernen: ${subjectName(subject)}`;
+  $("#cards-heading").textContent = `🃏 Karteikarten: ${subjectName(subject)}`;
+  $("#subject-quiz").disabled = $("#subject-cards").disabled = subject === null;
+  $("#subject-quiz").title = subject === null ? "Wähle links zuerst ein Fach" : "";
+}
+
+function fillSubjectSelect(select, selected, allowNew = false) {
+  const names = subjects.map((s) => s.subject);
+  if (selected && !names.includes(selected)) names.push(selected);
+  select.innerHTML = names.map((n) => `<option value="${esc(n)}" ${n === selected ? "selected" : ""}>${esc(n || NO_SUBJECT)}</option>`).join("") +
+    (allowNew ? `<option value="__new__">➕ Neues Fach…</option>` : "");
+  if (allowNew) select.onchange = () => ($("#rec-subject-new").hidden = select.value !== "__new__");
 }
 
 // --- Notizen -----------------------------------------------------------------
@@ -93,31 +175,62 @@ async function loadDocs() {
   if (working) pollTimer = setTimeout(refresh, 3000);
 }
 
+async function refreshAll() {
+  await Promise.all([loadSubjects(), loadDocs()]);
+  updateHeadings();
+  loadStatus();
+}
+
 async function refresh() {
   await loadDocs();
   if (currentDoc && !$("#view-doc").hidden) openDoc(currentDoc.id, { keepOutput: true });
 }
 
-function renderDocs() {
-  const q = $("#filter").value.toLowerCase();
-  const list = $("#doc-list");
-  const shown = docs.filter((d) => (d.title + " " + d.subject).toLowerCase().includes(q));
-  if (!shown.length) {
-    list.innerHTML = `<li class="hint">${docs.length ? "Nichts gefunden." : "Noch keine Notizen. Lade oben PDFs hoch oder nimm eine Lektion auf."}</li>`;
-    return;
+// Ordnet die Notizen eines Fachs: OneNote-Abschnitte nach Notizbuch/Abschnittsgruppe, dann Lektionen und eigene Notizen.
+function groupDocs(list) {
+  const groups = new Map();
+  const add = (key, doc, label) => {
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push({ doc, label });
+  };
+  for (const d of list) {
+    if (d.external_id && d.title.includes(" / ")) {
+      const parts = d.title.split(" / ");
+      add("📓 " + parts.slice(0, -1).join(" / "), d, parts[parts.length - 1]);
+    } else if (d.kind === "lesson") add("🎙️ Lektionen", d, d.title);
+    else add("📝 Eigene Notizen und PDFs", d, d.title);
   }
-  list.innerHTML = shown.map((d) => `
-    <li data-id="${d.id}">
-      <div>
-        <div class="title">${esc(d.title)}</div>
-        <div class="hint">${KIND[d.kind] || d.kind}${d.subject ? " · " + esc(d.subject) : ""} · ${new Date(d.created_at * 1000).toLocaleDateString("de-CH")}
-          ${d.progress ? " · " + esc(d.progress) : ""}</div>
-      </div>
-      <span class="pill ${d.status}">${STATUS[d.status] || d.status}</span>
-    </li>`).join("");
+  return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b, "de"));
 }
 
-$("#doc-list").addEventListener("click", (e) => {
+function renderDocs() {
+  const q = $("#filter").value.toLowerCase();
+  const shown = docs.filter((d) => (subject === null || d.subject === subject) && d.title.toLowerCase().includes(q));
+  const tree = $("#doc-tree");
+  if (!shown.length) {
+    tree.innerHTML = `<p class="hint">${docs.length ? "Keine Notizen gefunden." : "Noch keine Notizen. Synchronisiere OneNote oder nimm eine Lektion auf."}</p>`;
+    return;
+  }
+  tree.innerHTML = groupDocs(shown).map(([group, items]) => `
+    <details class="group" open>
+      <summary><span>${esc(group)}</span><span class="hint">${items.length}</span></summary>
+      <ul class="doc-list">
+        ${items.sort((a, b) => a.label.localeCompare(b.label, "de")).map(({ doc: d, label }) => `
+          <li data-id="${d.id}">
+            <span class="title">${KIND[d.kind] || ""} ${esc(label)}
+              ${subject === null && d.subject ? `<span class="tag">${esc(d.subject)}</span>` : ""}
+              ${d.progress ? `<span class="hint small"> · ${esc(d.progress)}</span>` : ""}</span>
+            <span class="row">
+              ${d.has_file && d.kind === "pdf" ? `<a href="/api/documents/${d.id}/file" target="_blank" class="pdf-link" title="PDF öffnen">PDF</a>` : ""}
+              <span class="pill ${d.status}">${STATUS[d.status] || d.status}</span>
+            </span>
+          </li>`).join("")}
+      </ul>
+    </details>`).join("");
+}
+
+$("#doc-tree").addEventListener("click", (e) => {
+  if (e.target.closest("a")) return;
   const li = e.target.closest("li[data-id]");
   if (li) openDoc(Number(li.dataset.id));
 });
@@ -128,10 +241,15 @@ async function openDoc(id, { keepOutput = false } = {}) {
   currentDoc = doc;
   show("doc");
   $("#doc-title").textContent = doc.title;
-  const meta = [KIND[doc.kind], doc.subject, STATUS[doc.status]];
+  const meta = [KIND[doc.kind], STATUS[doc.status]];
   if (doc.progress) meta.push(doc.progress);
   $("#doc-meta").innerHTML = esc(meta.filter(Boolean).join(" · ")) +
     (doc.error ? `<br><span class="error-text">${esc(doc.error)}</span>` : "");
+  fillSubjectSelect($("#doc-subject"), doc.subject);
+  const file = $("#doc-file");
+  file.hidden = !doc.source_path;
+  file.href = `/api/documents/${doc.id}/file`;
+  file.textContent = doc.kind === "lesson" ? "🔊 Aufnahme anhören" : "📄 Original öffnen";
   const ready = doc.status === "ready";
   ["#doc-summary", "#doc-quiz", "#doc-cards"].forEach((s) => ($(s).disabled = !ready));
   $("#doc-retry").hidden = doc.status !== "error";
@@ -143,6 +261,12 @@ async function openDoc(id, { keepOutput = false } = {}) {
   if (!keepOutput) $("#doc-output").innerHTML = "";
 }
 
+$("#doc-subject").addEventListener("change", async (e) => {
+  await postJSON(`/api/documents/${currentDoc.id}`, { subject: e.target.value }, "PATCH");
+  currentDoc.subject = e.target.value;
+  refreshAll();
+});
+
 $("#back").addEventListener("click", () => { currentDoc = null; show("notes"); loadDocs(); });
 
 $("#doc-delete").addEventListener("click", async () => {
@@ -150,7 +274,7 @@ $("#doc-delete").addEventListener("click", async () => {
   await api(`/api/documents/${currentDoc.id}`, { method: "DELETE" });
   currentDoc = null;
   show("notes");
-  loadDocs();
+  refreshAll();
 });
 
 $("#doc-retry").addEventListener("click", async () => {
@@ -159,10 +283,11 @@ $("#doc-retry").addEventListener("click", async () => {
 });
 
 $("#doc-summary").addEventListener("click", (e) => busy(e.target, async () => {
-  $("#doc-output").innerHTML = `<p class="spinner">Die KI fasst zusammen. Das kann ein paar Minuten dauern…</p>`;
-  const { summary } = await postJSON(`/api/documents/${currentDoc.id}/summary`);
-  $("#doc-output").innerHTML = "";
-  $("#doc-summary-box").innerHTML = `<div class="md">${md(summary)}</div>`;
+  $("#doc-output").innerHTML = `<p class="spinner">Die KI fasst zusammen…</p>`;
+  try {
+    const { summary } = await postJSON(`/api/documents/${currentDoc.id}/summary`);
+    $("#doc-summary-box").innerHTML = `<div class="md">${md(summary)}</div>`;
+  } finally { $("#doc-output").innerHTML = ""; }
 }));
 
 $("#doc-cards").addEventListener("click", (e) => busy(e.target, async () => {
@@ -175,13 +300,12 @@ $("#doc-cards").addEventListener("click", (e) => busy(e.target, async () => {
 $("#doc-quiz").addEventListener("click", (e) => busy(e.target, async () => {
   $("#doc-output").innerHTML = `<p class="spinner">Erstelle Quiz…</p>`;
   const { fragen } = await postJSON(`/api/documents/${currentDoc.id}/quiz`);
-  renderQuiz(fragen);
+  renderQuiz($("#doc-output"), fragen);
 }));
 
-function renderQuiz(questions) {
+function renderQuiz(box, questions) {
   let score = 0, answered = 0;
-  const box = $("#doc-output");
-  box.innerHTML = `<h3>Quiz</h3><p id="quiz-score" class="hint"></p>` + questions.map((q, i) => `
+  box.innerHTML = `<h3>Quiz</h3><p class="hint quiz-score"></p>` + questions.map((q, i) => `
     <div class="quiz-q" data-i="${i}">
       <strong>${i + 1}. ${esc(q.frage)}</strong>
       ${q.optionen.map((o, j) => `<button data-j="${j}">${esc(o)}</button>`).join("")}
@@ -194,12 +318,11 @@ function renderQuiz(questions) {
       if (!btn || div.dataset.done) return;
       div.dataset.done = "1";
       answered++;
-      const pick = Number(btn.dataset.j);
-      if (pick === q.richtig) score++;
+      if (Number(btn.dataset.j) === q.richtig) score++;
       else btn.classList.add("wrong");
       div.querySelectorAll("button")[q.richtig].classList.add("right");
       div.querySelector(".expl").hidden = !q.erklaerung;
-      $("#quiz-score").textContent = `${score} von ${answered} richtig` +
+      box.querySelector(".quiz-score").textContent = `${score} von ${answered} richtig` +
         (answered === questions.length ? ` – fertig! ${score === questions.length ? "🎉" : ""}` : "");
     });
   });
@@ -211,7 +334,6 @@ let onenoteTimer = null;
 
 function renderOnenote(s) {
   $("#onenote-box").hidden = !s.available;
-  $("#pdf-manual").open = !s.available;
   $("#onenote-sync").disabled = s.running;
   let text = "";
   if (s.running) text = s.message || "Läuft…";
@@ -224,7 +346,7 @@ function renderOnenote(s) {
   $("#onenote-status").textContent = text;
   clearTimeout(onenoteTimer);
   if (s.running) onenoteTimer = setTimeout(loadOnenote, 2000);
-  else if (s.result) loadDocs();
+  else if (s.result) refreshAll();
 }
 
 async function loadOnenote() {
@@ -235,33 +357,38 @@ $("#onenote-sync").addEventListener("click", async () => {
   try { renderOnenote(await postJSON("/api/onenote/sync")); } catch (e) { alert(e.message); }
 });
 
-// --- Upload ------------------------------------------------------------------
+// --- Hinzufügen --------------------------------------------------------------
 
 $("#pdf-upload").addEventListener("click", (e) => busy(e.target, async () => {
   const files = $("#pdf-files").files;
   if (!files.length) throw new Error("Bitte zuerst PDF-Dateien auswählen.");
   const form = new FormData();
   for (const f of files) form.append("files", f);
-  form.append("subject", $("#pdf-subject").value);
+  form.append("subject", subject ?? "");
   await api("/api/upload/pdf", { method: "POST", body: form });
   $("#pdf-files").value = "";
-  loadDocs();
+  refreshAll();
 }));
 
 $("#note-save").addEventListener("click", (e) => busy(e.target, async () => {
-  await postJSON("/api/notes", { title: $("#note-title").value || "Notiz", text: $("#note-text").value, subject: "" });
+  await postJSON("/api/notes", { title: $("#note-title").value || "Notiz", text: $("#note-text").value, subject: subject ?? "" });
   $("#note-title").value = $("#note-text").value = "";
-  loadDocs();
+  refreshAll();
 }));
+
+function recordSubject() {
+  const sel = $("#rec-subject").value;
+  return sel === "__new__" ? $("#rec-subject-new").value.trim() : sel;
+}
 
 async function uploadAudio(blob, filename) {
   const form = new FormData();
   form.append("file", blob, filename);
   form.append("title", $("#rec-title").value);
-  form.append("subject", $("#rec-subject").value);
+  form.append("subject", recordSubject());
   await api("/api/upload/audio", { method: "POST", body: form });
   $("#rec-title").value = "";
-  loadDocs();
+  refreshAll();
 }
 
 $("#audio-upload").addEventListener("click", (e) => busy(e.target, async () => {
@@ -269,6 +396,7 @@ $("#audio-upload").addEventListener("click", (e) => busy(e.target, async () => {
   if (!file) throw new Error("Bitte zuerst eine Audiodatei auswählen.");
   await uploadAudio(file, file.name);
   $("#audio-file").value = "";
+  alert("Hochgeladen. Die Lektion wird jetzt im Hintergrund verarbeitet.");
 }));
 
 // --- Aufnahme ----------------------------------------------------------------
@@ -276,6 +404,7 @@ $("#audio-upload").addEventListener("click", (e) => busy(e.target, async () => {
 let recorder = null, recChunks = [], recStart = 0, recTimer = null, wakeLock = null;
 
 $("#rec-start").addEventListener("click", async () => {
+  if ($("#rec-subject").value === "__new__" && !recordSubject()) { alert("Bitte einen Namen für das neue Fach eingeben."); return; }
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: true } });
     const mime = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/webm"].find((m) => MediaRecorder.isTypeSupported(m));
@@ -327,7 +456,24 @@ $("#rec-stop").addEventListener("click", () => {
 
 window.addEventListener("beforeunload", (e) => { if (recorder) { e.preventDefault(); e.returnValue = ""; } });
 
-// --- Fragen ------------------------------------------------------------------
+// --- Lernen ------------------------------------------------------------------
+
+$("#subject-quiz").addEventListener("click", (e) => busy(e.target, async () => {
+  $("#learn-output").innerHTML = `<p class="spinner">Erstelle Quiz über ${esc(subjectName(subject))}…</p>`;
+  try {
+    const { fragen } = await postJSON("/api/subjects/quiz", { subject });
+    renderQuiz($("#learn-output"), fragen);
+  } catch (err) { $("#learn-output").innerHTML = ""; throw err; }
+}));
+
+$("#subject-cards").addEventListener("click", (e) => busy(e.target, async () => {
+  $("#learn-output").innerHTML = `<p class="spinner">Erstelle Karteikarten…</p>`;
+  try {
+    const { created } = await postJSON("/api/subjects/flashcards", { subject });
+    $("#learn-output").innerHTML = `<p>✅ ${created} Karteikarten erstellt. Du findest sie unter „Karteikarten“.</p>`;
+    loadStatus();
+  } catch (err) { $("#learn-output").innerHTML = ""; throw err; }
+}));
 
 $("#ask-form").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -336,16 +482,14 @@ $("#ask-form").addEventListener("submit", async (e) => {
   if (!question) return;
   input.value = "";
   const chat = $("#chat");
-  chat.insertAdjacentHTML("beforeend", `<div class="msg me">${esc(question)}</div>`);
+  chat.insertAdjacentHTML("beforeend", `<div class="msg me">${esc(question)}<div class="hint small">${esc(subjectName(subject))}</div></div>`);
   const pending = document.createElement("div");
   pending.className = "msg bot spinner";
   pending.textContent = "Suche in deinen Notizen…";
   chat.append(pending);
   try {
-    const { answer, sources } = await postJSON("/api/ask", { question });
+    const { answer, sources } = await postJSON("/api/ask", { question, subject });
     pending.className = "msg bot";
-    const seen = new Map();
-    sources.forEach((s) => seen.has(s.doc_id) || seen.set(s.doc_id, s));
     pending.innerHTML = `<div class="md">${md(answer)}</div>` + (sources.length ? `<div class="sources">Quellen: ${
       sources.map((s) => `<a data-id="${s.doc_id}">[${s.n}] ${esc(s.title)}</a>`).join(" · ")}</div>` : "");
   } catch (err) {
@@ -364,7 +508,7 @@ $("#chat").addEventListener("click", (e) => {
 let cardQueue = [];
 
 async function loadCards() {
-  cardQueue = await api("/api/flashcards/due");
+  cardQueue = await api("/api/flashcards/due" + subjectQuery());
   showCard();
 }
 
@@ -372,7 +516,7 @@ function showCard() {
   const area = $("#flashcard-area");
   const card = cardQueue[0];
   if (!card) {
-    area.innerHTML = `<p>🎉 Keine Karten fällig. Erstelle neue Karten bei einer Notiz mit „Karteikarten erstellen“.</p>`;
+    area.innerHTML = `<p>🎉 Keine Karten fällig. Erstelle neue Karten unter „Lernen“ oder bei einer Notiz.</p>`;
     loadStatus();
     return;
   }
@@ -399,10 +543,53 @@ function showCard() {
   });
 }
 
+// --- Einstellungen -----------------------------------------------------------
+
+let allModels = [];
+
+async function loadSettings() {
+  const s = await api("/api/settings");
+  $("#key-hint").textContent = s.key_set ? `(gespeichert ${s.key_hint})` : "(noch keiner)";
+  $("#set-key").value = "";
+  try {
+    const { models, suggested } = await api("/api/models");
+    allModels = models;
+    renderModels(s.chat_model || suggested || "");
+  } catch (e) {
+    $("#set-model").innerHTML = `<option value="${esc(s.chat_model)}">${esc(s.chat_model || "Modell-Liste nicht erreichbar")}</option>`;
+  }
+}
+
+function renderModels(selected) {
+  const onlyFree = $("#only-free").checked;
+  const list = allModels.filter((m) => !onlyFree || m.free || m.id === selected);
+  const price = (m) => (m.free ? "gratis" : `$${(Number(m.price_in) * 1e6).toFixed(2)} / Mio. Tokens`);
+  $("#set-model").innerHTML = list.map((m) =>
+    `<option value="${esc(m.id)}" ${m.id === selected ? "selected" : ""}>${esc(m.name)} – ${price(m)}</option>`).join("");
+}
+
+$("#only-free").addEventListener("change", () => renderModels($("#set-model").value));
+
+$("#set-save").addEventListener("click", (e) => busy(e.target, async () => {
+  const body = { chat_model: $("#set-model").value };
+  if ($("#set-key").value.trim()) body.openrouter_key = $("#set-key").value.trim();
+  await postJSON("/api/settings", body);
+  $("#set-result").textContent = "✅ Gespeichert";
+  loadSettings();
+  loadStatus();
+}));
+
+$("#set-test").addEventListener("click", (e) => busy(e.target, async () => {
+  $("#set-result").textContent = "Teste…";
+  try {
+    const { reply } = await postJSON("/api/settings/test");
+    $("#set-result").textContent = "✅ KI antwortet: " + reply;
+  } catch (err) { $("#set-result").textContent = "⚠️ " + err.message; }
+}));
+
 // --- Start -------------------------------------------------------------------
 
 document.querySelectorAll("nav button").forEach((b) => b.addEventListener("click", () => { currentDoc = null; show(b.dataset.view); }));
-loadDocs();
-loadStatus();
+refreshAll();
 loadOnenote();
 setInterval(loadStatus, 30000);

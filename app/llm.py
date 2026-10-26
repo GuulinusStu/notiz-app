@@ -1,11 +1,12 @@
-"""Kleiner Client für Ollama (lokale KI): Chat, Embeddings und Statusprüfung."""
+"""KI-Anbindung: Antworten über OpenRouter (Internet), Suche mit einem kleinen lokalen Modell."""
 import json
 import re
+import threading
 
 import httpx
 import numpy as np
 
-from . import config
+from . import config, db
 
 
 class LLMError(RuntimeError):
@@ -14,24 +15,62 @@ class LLMError(RuntimeError):
 
 _THINK = re.compile(r"<think>.*?</think>", re.S)
 
+# Bevorzugte Gratis-Modelle, falls in den Einstellungen nichts gewählt ist (erstes verfügbares gewinnt).
+PREFERRED_FREE = ["deepseek", "llama-3.3-70b", "qwen3", "gemma-3-27b", "mistral-small"]
 
-def chat(messages: list[dict], *, json_mode: bool = False, num_ctx: int = 8192,
-         temperature: float = 0.3, timeout: float = 900) -> str:
-    payload = {
-        "model": config.CHAT_MODEL,
-        "messages": messages,
-        "stream": False,
-        "think": False,
-        "options": {"num_ctx": num_ctx, "temperature": temperature},
-    }
-    if json_mode:
-        payload["format"] = "json"
+
+# --- Einstellungen -----------------------------------------------------------
+
+def api_key() -> str:
+    return db.get_setting("openrouter_key") or config.OPENROUTER_KEY
+
+
+def chat_model() -> str:
+    return db.get_setting("chat_model") or config.CHAT_MODEL
+
+
+def _headers() -> dict:
+    key = api_key()
+    if not key:
+        raise LLMError("Kein OpenRouter-Schlüssel eingetragen. Bitte unter „Einstellungen“ eintragen.")
+    return {"Authorization": f"Bearer {key}", "X-Title": "Notiz-App"}
+
+
+def _error_text(r: httpx.Response) -> str:
     try:
-        r = httpx.post(f"{config.OLLAMA_URL}/api/chat", json=payload, timeout=timeout)
-        r.raise_for_status()
+        return r.json().get("error", {}).get("message") or r.text[:200]
+    except ValueError:
+        return r.text[:200]
+
+
+# --- Chat --------------------------------------------------------------------
+
+def chat(messages: list[dict], *, json_mode: bool = False, temperature: float = 0.3,
+         timeout: float = 300, **_ignored) -> str:
+    headers = _headers()
+    model = chat_model()
+    if not model:
+        raise LLMError("Kein KI-Modell gewählt. Bitte unter „Einstellungen“ ein Modell auswählen.")
+    payload = {"model": model, "messages": messages, "temperature": temperature}
+    if json_mode:
+        payload["response_format"] = {"type": "json_object"}
+    try:
+        r = httpx.post(f"{config.OPENROUTER_URL}/chat/completions", json=payload,
+                       headers=headers, timeout=timeout)
     except httpx.HTTPError as e:
-        raise LLMError(f"Ollama ist nicht erreichbar oder hat einen Fehler gemeldet: {e}") from e
-    content = r.json()["message"]["content"]
+        raise LLMError(f"OpenRouter ist nicht erreichbar (Internet?): {e}") from e
+    if r.status_code == 401:
+        raise LLMError("Der OpenRouter-Schlüssel ist ungültig. Bitte unter „Einstellungen“ prüfen.")
+    if r.status_code == 402:
+        raise LLMError("Dein OpenRouter-Guthaben ist aufgebraucht. Lade Guthaben auf oder wähle ein Gratis-Modell.")
+    if r.status_code == 429:
+        raise LLMError("OpenRouter-Limit erreicht (bei Gratis-Modellen gibt es ein Tageslimit). Bitte später nochmals versuchen.")
+    if r.status_code >= 400:
+        raise LLMError(f"OpenRouter-Fehler {r.status_code}: {_error_text(r)}")
+    data = r.json()
+    if "error" in data:
+        raise LLMError(f"OpenRouter-Fehler: {data['error'].get('message', data['error'])}")
+    content = (data["choices"][0]["message"].get("content") or "")
     return _THINK.sub("", content).strip()
 
 
@@ -39,22 +78,59 @@ def ask(system: str, user: str, **kwargs) -> str:
     return chat([{"role": "system", "content": system}, {"role": "user", "content": user}], **kwargs)
 
 
-def embed(texts: list[str], batch_size: int = 16) -> np.ndarray:
-    vectors = []
-    for start in range(0, len(texts), batch_size):
-        batch = texts[start:start + batch_size]
-        try:
-            r = httpx.post(f"{config.OLLAMA_URL}/api/embed",
-                           json={"model": config.EMBED_MODEL, "input": batch}, timeout=600)
-            r.raise_for_status()
-        except httpx.HTTPError as e:
-            raise LLMError(f"Embeddings fehlgeschlagen (läuft Ollama, ist '{config.EMBED_MODEL}' geladen?): {e}") from e
-        vectors.extend(r.json()["embeddings"])
+def list_models() -> list[dict]:
+    try:
+        r = httpx.get(f"{config.OPENROUTER_URL}/models", timeout=20)
+        r.raise_for_status()
+    except httpx.HTTPError as e:
+        raise LLMError(f"Modell-Liste konnte nicht geladen werden: {e}") from e
+    models = []
+    for m in r.json().get("data", []):
+        pricing = m.get("pricing", {})
+        free = m["id"].endswith(":free") or (pricing.get("prompt") == "0" and pricing.get("completion") == "0")
+        models.append({"id": m["id"], "name": m.get("name", m["id"]), "free": free,
+                       "context": m.get("context_length"),
+                       "price_in": pricing.get("prompt"), "price_out": pricing.get("completion")})
+    models.sort(key=lambda m: (not m["free"], m["name"].lower()))
+    return models
+
+
+def pick_default_model(models: list[dict]) -> str | None:
+    free = [m["id"] for m in models if m["free"]]
+    for wanted in PREFERRED_FREE:
+        for model_id in free:
+            if wanted in model_id:
+                return model_id
+    return free[0] if free else None
+
+
+# --- Suche (lokal) -----------------------------------------------------------
+
+_embedder = None
+_embed_lock = threading.Lock()
+
+
+def _get_embedder():
+    global _embedder
+    with _embed_lock:
+        if _embedder is None:
+            from fastembed import TextEmbedding
+            _embedder = TextEmbedding(config.EMBED_MODEL)
+        return _embedder
+
+
+def embed(texts: list[str], batch_size: int = 32) -> np.ndarray:
+    try:
+        vectors = list(_get_embedder().embed(texts, batch_size=batch_size))
+    except Exception as e:
+        raise LLMError(f"Suchmodell konnte nicht geladen werden: {e}") from e
     return np.asarray(vectors, dtype=np.float32)
 
 
+# --- JSON --------------------------------------------------------------------
+
 def parse_json(text: str):
-    """Liest JSON aus einer KI-Antwort, auch wenn noch Text drumherum steht."""
+    """Liest JSON aus einer KI-Antwort, auch wenn noch Text oder ```-Blöcke drumherum stehen."""
     try:
         return json.loads(text)
     except json.JSONDecodeError:
@@ -67,19 +143,6 @@ def parse_json(text: str):
     raise LLMError("Die Antwort der KI war kein gültiges JSON. Bitte nochmals versuchen.")
 
 
-def _has_model(names: list[str], model: str) -> bool:
-    return any(n == model or n == f"{model}:latest" for n in names)
-
-
 def status() -> dict:
-    result = {"ollama": False, "chat_model": config.CHAT_MODEL, "embed_model": config.EMBED_MODEL,
-              "chat_model_ok": False, "embed_model_ok": False}
-    try:
-        r = httpx.get(f"{config.OLLAMA_URL}/api/tags", timeout=3)
-        r.raise_for_status()
-    except httpx.HTTPError:
-        return result
-    names = [m["name"] for m in r.json().get("models", [])]
-    result.update(ollama=True, chat_model_ok=_has_model(names, config.CHAT_MODEL),
-                  embed_model_ok=_has_model(names, config.EMBED_MODEL))
-    return result
+    return {"provider": "openrouter", "key_set": bool(api_key()), "chat_model": chat_model(),
+            "embed_model": config.EMBED_MODEL}

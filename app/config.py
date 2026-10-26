@@ -10,10 +10,12 @@ UPLOAD_DIR = DATA_DIR / "uploads"
 HOST = os.environ.get("NOTIZAPP_HOST", "127.0.0.1")
 PORT = int(os.environ.get("NOTIZAPP_PORT", "8000"))
 
-OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-CHAT_MODEL = os.environ.get("NOTIZAPP_CHAT_MODEL", "qwen3:14b")
-# bge-m3 ist mehrsprachig und funktioniert gut mit deutschen Texten.
-EMBED_MODEL = os.environ.get("NOTIZAPP_EMBED_MODEL", "bge-m3")
+OPENROUTER_URL = os.environ.get("OPENROUTER_URL", "https://openrouter.ai/api/v1")
+# Schlüssel und Modell werden normalerweise in der App unter „Einstellungen“ eingetragen.
+OPENROUTER_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+CHAT_MODEL = os.environ.get("NOTIZAPP_CHAT_MODEL", "")
+# Kleines mehrsprachiges Modell für die Suche, läuft lokal und braucht wenig Leistung.
+EMBED_MODEL = os.environ.get("NOTIZAPP_EMBED_MODEL", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
 
 WHISPER_MODEL = os.environ.get("NOTIZAPP_WHISPER_MODEL", "large-v3-turbo")
 WHISPER_DEVICE = os.environ.get("NOTIZAPP_WHISPER_DEVICE", "auto")  # auto | cpu | cuda

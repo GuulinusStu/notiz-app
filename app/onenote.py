@@ -110,7 +110,8 @@ def sync(progress=lambda _msg: None, *, lister=None, exporter=None) -> dict:
             worker.enqueue(doc["id"])
             result["updated"] += 1
         else:
-            doc_id = db.create_document(section["path"], "pdf", section.get("notebook", ""), str(target),
+            subject = db.subject_for(section.get("notebook", ""))
+            doc_id = db.create_document(section["path"], "pdf", subject, str(target),
                                         external_id=ext_id, external_modified=section["lastModified"])
             worker.enqueue(doc_id)
             result["new"] += 1

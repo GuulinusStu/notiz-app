@@ -97,4 +97,36 @@ def test_quiz_and_flashcards_drop_invalid_items(fake_llm):
     quiz = study.make_quiz(doc)
     assert len(quiz) == 1 and quiz[0]["richtig"] == 1
     assert study.make_flashcards(doc) == 1
-    assert db.flashcard_counts() == {"total": 1, "due": 1}
+    counts = db.flashcard_counts()
+    assert counts["total"] == 1 and counts["due"] == 1
+
+
+def test_subjects_scope_search_and_rename(fake_llm):
+    bio = db.create_document("Zellen", "text", subject="Bio", raw_text="Die Mitose ist die Zellteilung.")
+    geo = db.create_document("Schweiz", "text", subject="Geo", raw_text="Bern ist die Bundesstadt.")
+    ingest.process(bio)
+    ingest.process(geo)
+    assert {h["doc_id"] for h in study.search("Mitose Zellteilung", subject="Geo")} == {geo}
+    assert db.rename_subject("Bio", "Biologie") == 1
+    assert {s["subject"] for s in db.list_subjects()} == {"Biologie", "Geo"}
+    assert db.subject_for("Bio") == "Biologie"
+    assert db.subject_for("Unbekannt") == "Unbekannt"
+
+
+def test_subject_wide_flashcards_link_to_source_doc(fake_llm, monkeypatch):
+    a = db.create_document("A", "text", subject="Mathe", raw_text="Brüche haben Zähler und Nenner.")
+    ingest.process(a)
+    monkeypatch.setattr(llm, "ask", lambda *a, **k: '{"karten": [{"vorne": "Was hat ein Bruch?", "hinten": "Zähler und Nenner", "quelle": 1}]}')
+    assert study.make_flashcards(subject="Mathe") == 1
+    assert db.due_flashcards(subject="Mathe")[0]["doc_id"] == a
+    assert db.due_flashcards(subject="Geo") == []
+    with pytest.raises(llm.LLMError):
+        study.make_quiz(subject="Leer")
+
+
+def test_reindex_keeps_text(fake_llm):
+    doc_id = db.create_document("A", "text", raw_text="Inhalt hier")
+    ingest.process(doc_id)
+    db.replace_chunks(doc_id, [])
+    ingest.reindex(doc_id)
+    assert study.search("Inhalt")[0]["doc_id"] == doc_id

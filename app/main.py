@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -68,6 +68,81 @@ def list_documents():
 @app.get("/api/documents/{doc_id}")
 def get_document(doc_id: int):
     return require_doc(doc_id)
+
+
+class DocUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=300)
+    subject: str | None = Field(default=None, max_length=100)
+
+
+@app.patch("/api/documents/{doc_id}")
+def update_document(doc_id: int, upd: DocUpdate):
+    require_doc(doc_id)
+    fields = {k: v.strip() for k, v in upd.model_dump().items() if v is not None}
+    db.update_document(doc_id, **fields)
+    return db.get_document(doc_id)
+
+
+@app.get("/api/documents/{doc_id}/file")
+def document_file(doc_id: int):
+    doc = require_doc(doc_id)
+    path = Path(doc["source_path"] or "")
+    if not doc["source_path"] or not path.is_file():
+        raise HTTPException(404, "Zu dieser Notiz gibt es keine Datei.")
+    return FileResponse(path, filename=f"{doc['title']}{path.suffix}".replace("/", "-"),
+                        content_disposition_type="inline")
+
+
+# --- Fächer ------------------------------------------------------------------
+
+@app.get("/api/subjects")
+def subjects():
+    return db.list_subjects()
+
+
+class SubjectRename(BaseModel):
+    old: str
+    new: str = Field(min_length=1, max_length=100)
+
+
+@app.post("/api/subjects/rename")
+def rename_subject(r: SubjectRename):
+    return {"changed": db.rename_subject(r.old, r.new.strip())}
+
+
+# --- Einstellungen -----------------------------------------------------------
+
+class SettingsIn(BaseModel):
+    openrouter_key: str | None = None
+    chat_model: str | None = None
+
+
+@app.get("/api/settings")
+def get_settings():
+    key = llm.api_key()
+    return {"key_set": bool(key), "key_hint": f"…{key[-4:]}" if len(key) > 8 else "",
+            "chat_model": llm.chat_model()}
+
+
+@app.post("/api/settings")
+def save_settings(s: SettingsIn):
+    if s.openrouter_key is not None:
+        db.set_setting("openrouter_key", s.openrouter_key.strip())
+    if s.chat_model is not None:
+        db.set_setting("chat_model", s.chat_model.strip())
+    return get_settings()
+
+
+@app.get("/api/models")
+def models():
+    found = llm.list_models()
+    return {"models": found, "suggested": llm.pick_default_model(found)}
+
+
+@app.post("/api/settings/test")
+def test_settings():
+    reply = llm.ask("Antworte kurz auf Deutsch.", "Sag in einem Satz Hallo.")
+    return {"reply": reply}
 
 
 @app.delete("/api/documents/{doc_id}")
@@ -138,11 +213,26 @@ def create_note(note: NoteIn):
 
 class Question(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
+    subject: str | None = None
 
 
 @app.post("/api/ask")
 def ask(q: Question):
-    return study.answer(q.question.strip())
+    return study.answer(q.question.strip(), subject=q.subject)
+
+
+class SubjectIn(BaseModel):
+    subject: str
+
+
+@app.post("/api/subjects/quiz")
+def subject_quiz(s: SubjectIn, n: int = 8):
+    return {"fragen": study.make_quiz(subject=s.subject, n=max(1, min(n, 15)))}
+
+
+@app.post("/api/subjects/flashcards")
+def subject_flashcards(s: SubjectIn, n: int = 15):
+    return {"created": study.make_flashcards(subject=s.subject, n=max(1, min(n, 30)))}
 
 
 @app.post("/api/documents/{doc_id}/summary")
@@ -164,8 +254,8 @@ def flashcards(doc_id: int, n: int = 10):
 
 
 @app.get("/api/flashcards/due")
-def due_cards():
-    return db.due_flashcards()
+def due_cards(subject: str | None = None):
+    return db.due_flashcards(subject=subject)
 
 
 class Review(BaseModel):
