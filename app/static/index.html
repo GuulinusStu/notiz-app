@@ -39,11 +39,21 @@
         </div>
 
         <div class="card">
-          <h2>📄 OneNote-PDFs importieren</h2>
+          <h2>📄 OneNote importieren</h2>
+          <div id="onenote-box" hidden>
+            <p class="hint">Exportiert alle Abschnitte aus der OneNote-App auf diesem PC. Geänderte Abschnitte werden beim nächsten Mal automatisch aktualisiert.</p>
+            <div class="row wrap">
+              <button id="onenote-sync" class="primary">OneNote synchronisieren</button>
+              <span id="onenote-status" class="hint"></span>
+            </div>
+          </div>
+          <details id="pdf-manual">
+          <summary>Oder PDFs selbst hochladen</summary>
           <p class="hint">In OneNote am PC: Datei → Exportieren → Abschnitt → PDF. Du kannst mehrere PDFs auf einmal wählen.</p>
           <input id="pdf-subject" placeholder="Fach (optional)">
           <input type="file" id="pdf-files" accept=".pdf" multiple>
           <button id="pdf-upload" class="primary">Importieren</button>
+          </details>
           <details>
             <summary>Oder Text einfügen</summary>
             <input id="note-title" placeholder="Titel">

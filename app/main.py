@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import config, db, ingest, llm, srs, study, worker
+from . import config, db, ingest, llm, onenote, srs, study, worker
 
 PDF_TYPES = {".pdf"}
 AUDIO_TYPES = {".webm", ".ogg", ".mp3", ".m4a", ".wav", ".mp4", ".aac", ".flac", ".opus"}
@@ -20,6 +20,8 @@ async def lifespan(_app: FastAPI):
     db.init()
     config.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     worker.start()
+    if onenote.available() and config.ONENOTE_AUTO_SYNC:
+        onenote.start_sync()
     yield
 
 
@@ -104,6 +106,19 @@ def upload_audio(file: UploadFile = File(...), title: str = Form(""), subject: s
     doc_id = db.create_document(title, "lesson", subject.strip(), str(path))
     worker.enqueue(doc_id)
     return {"id": doc_id}
+
+
+@app.get("/api/onenote")
+def onenote_status():
+    return onenote.status()
+
+
+@app.post("/api/onenote/sync")
+def onenote_sync():
+    if not onenote.available():
+        raise HTTPException(400, "Der automatische OneNote-Export funktioniert nur unter Windows.")
+    onenote.start_sync()
+    return onenote.status()
 
 
 class NoteIn(BaseModel):

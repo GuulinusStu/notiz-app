@@ -205,6 +205,36 @@ function renderQuiz(questions) {
   });
 }
 
+// --- OneNote -----------------------------------------------------------------
+
+let onenoteTimer = null;
+
+function renderOnenote(s) {
+  $("#onenote-box").hidden = !s.available;
+  $("#pdf-manual").open = !s.available;
+  $("#onenote-sync").disabled = s.running;
+  let text = "";
+  if (s.running) text = s.message || "Läuft…";
+  else if (s.error) text = "⚠️ " + s.error;
+  else if (s.result) {
+    const r = s.result;
+    text = `✅ ${r.sections} Abschnitte: ${r.new} neu, ${r.updated} aktualisiert, ${r.unchanged} unverändert`;
+    if (r.failed.length) text += `, ${r.failed.length} fehlgeschlagen (${r.failed.map((f) => f.path).join(", ")})`;
+  }
+  $("#onenote-status").textContent = text;
+  clearTimeout(onenoteTimer);
+  if (s.running) onenoteTimer = setTimeout(loadOnenote, 2000);
+  else if (s.result) loadDocs();
+}
+
+async function loadOnenote() {
+  try { renderOnenote(await api("/api/onenote")); } catch { /* ignorieren */ }
+}
+
+$("#onenote-sync").addEventListener("click", async () => {
+  try { renderOnenote(await postJSON("/api/onenote/sync")); } catch (e) { alert(e.message); }
+});
+
 // --- Upload ------------------------------------------------------------------
 
 $("#pdf-upload").addEventListener("click", (e) => busy(e.target, async () => {
@@ -374,4 +404,5 @@ function showCard() {
 document.querySelectorAll("nav button").forEach((b) => b.addEventListener("click", () => { currentDoc = null; show(b.dataset.view); }));
 loadDocs();
 loadStatus();
+loadOnenote();
 setInterval(loadStatus, 30000);

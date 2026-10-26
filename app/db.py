@@ -18,6 +18,8 @@ CREATE TABLE IF NOT EXISTS documents (
   clean_text TEXT NOT NULL DEFAULT '',
   summary TEXT NOT NULL DEFAULT '',
   error TEXT NOT NULL DEFAULT '',
+  external_id TEXT,                         -- z. B. onenote:<Abschnitt-ID>
+  external_modified TEXT,
   created_at REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS chunks (
@@ -41,7 +43,10 @@ CREATE TABLE IF NOT EXISTS flashcards (
 """
 
 DOC_FIELDS = {"title", "subject", "status", "progress", "source_path",
-              "raw_text", "clean_text", "summary", "error"}
+              "raw_text", "clean_text", "summary", "error", "external_modified"}
+
+# Spalten, die nach der ersten Version dazugekommen sind
+MIGRATIONS = {"external_id": "TEXT", "external_modified": "TEXT"}
 
 
 def connect() -> sqlite3.Connection:
@@ -65,17 +70,22 @@ def session():
 def init() -> None:
     with session() as c:
         c.executescript(SCHEMA)
+        existing = {r["name"] for r in c.execute("PRAGMA table_info(documents)")}
+        for column, kind in MIGRATIONS.items():
+            if column not in existing:
+                c.execute(f"ALTER TABLE documents ADD COLUMN {column} {kind}")
 
 
 # --- Dokumente ---------------------------------------------------------------
 
 def create_document(title: str, kind: str, subject: str = "", source_path: str | None = None,
-                    raw_text: str = "") -> int:
+                    raw_text: str = "", external_id: str | None = None,
+                    external_modified: str | None = None) -> int:
     with session() as c:
         cur = c.execute(
-            "INSERT INTO documents (title, kind, subject, source_path, raw_text, created_at)"
-            " VALUES (?, ?, ?, ?, ?, ?)",
-            (title, kind, subject, source_path, raw_text, time.time()),
+            "INSERT INTO documents (title, kind, subject, source_path, raw_text, external_id,"
+            " external_modified, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (title, kind, subject, source_path, raw_text, external_id, external_modified, time.time()),
         )
         return cur.lastrowid
 
@@ -100,10 +110,19 @@ def get_document(doc_id: int) -> dict | None:
 def list_documents() -> list[dict]:
     with session() as c:
         rows = c.execute(
-            "SELECT id, title, kind, subject, status, progress, error, created_at,"
+            "SELECT id, title, kind, subject, status, progress, error, created_at, external_id,"
             " length(summary) > 0 AS has_summary FROM documents ORDER BY created_at DESC"
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+def documents_by_external_prefix(prefix: str) -> dict[str, dict]:
+    with session() as c:
+        rows = c.execute(
+            "SELECT id, external_id, external_modified, status FROM documents WHERE external_id LIKE ?",
+            (prefix.replace("%", "") + "%",),
+        )
+        return {r["external_id"]: dict(r) for r in rows}
 
 
 def documents_with_status(*statuses: str) -> list[int]:

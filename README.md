@@ -38,10 +38,18 @@ Das schwarze Fenster muss offen bleiben, solange du die App benutzt.
 
 Bei der ersten Aufnahme wird das Spracherkennungsmodell (ca. 1,6 GB) heruntergeladen.
 
-## OneNote als PDF exportieren
+## OneNote importieren
 
-In der **OneNote-App am PC** (nicht im Browser): Abschnitt auswählen → **Datei → Exportieren →
-Abschnitt → PDF → Exportieren**. Die PDFs dann in der App unter „OneNote-PDFs importieren“ hochladen.
+**Automatisch (empfohlen):** In der App auf **„OneNote synchronisieren“** klicken. Die App holt
+alle Abschnitte aus der **OneNote-App auf deinem PC** (die aus Microsoft 365, nicht die Web-Version)
+und exportiert jeden Abschnitt als PDF. Beim Start der App passiert das auch automatisch.
+Beim nächsten Mal werden nur Abschnitte neu geholt, die sich geändert haben.
+
+Voraussetzung: Die Notizbücher sind in der OneNote-App geöffnet und synchronisiert.
+Gesperrte (passwortgeschützte) Abschnitte werden übersprungen.
+
+**Von Hand:** In der OneNote-App: Abschnitt auswählen → **Datei → Exportieren → Abschnitt → PDF**.
+Die PDFs dann unter „Oder PDFs selbst hochladen“ importieren.
 
 Hinweis: Getippter Text wird gelesen. Handschrift und Text in Bildern werden noch nicht erkannt.
 
@@ -64,6 +72,7 @@ Hinweis: Getippter Text wird gelesen. Handschrift und Text in Bildern werden noc
 | `NOTIZAPP_WHISPER_MODEL` | `large-v3-turbo` | Spracherkennung (schneller, ungenauer: `small`) |
 | `NOTIZAPP_DATA` | `data/` | Wo Notizen und Aufnahmen gespeichert werden |
 | `NOTIZAPP_PORT` | `8000` | Port im Browser |
+| `NOTIZAPP_ONENOTE_AUTO_SYNC` | `1` | OneNote beim Start synchronisieren (`0` = aus) |
 
 ## Für Entwickler
 

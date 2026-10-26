@@ -18,3 +18,6 @@ EMBED_MODEL = os.environ.get("NOTIZAPP_EMBED_MODEL", "bge-m3")
 WHISPER_MODEL = os.environ.get("NOTIZAPP_WHISPER_MODEL", "large-v3-turbo")
 WHISPER_DEVICE = os.environ.get("NOTIZAPP_WHISPER_DEVICE", "auto")  # auto | cpu | cuda
 WHISPER_LANGUAGE = os.environ.get("NOTIZAPP_WHISPER_LANGUAGE", "de")
+
+# OneNote-Abschnitte beim Start der App automatisch exportieren (nur Windows)
+ONENOTE_AUTO_SYNC = os.environ.get("NOTIZAPP_ONENOTE_AUTO_SYNC", "1") == "1"
