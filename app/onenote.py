@@ -34,6 +34,15 @@ class IncompleteSection(OneNoteError):
     """OneNote hat noch nicht alle Seiten heruntergeladen. Wird beim nächsten Mal nochmals versucht."""
 
 
+class OneNoteStuck(OneNoteError):
+    """OneNote antwortet nicht mehr. Dann bringt es nichts, die anderen Abschnitte zu versuchen."""
+
+
+STUCK_MESSAGE = ("OneNote antwortet beim PDF-Export nicht. Meist wartet OneNote auf einen Drucker, der nicht "
+                 "erreichbar ist. Stelle in Windows unter Drucker und Scanner „Microsoft Print to PDF“ als "
+                 "Standarddrucker ein, schliesse OneNote ganz und versuche es nochmals.")
+EXPORT_TIMEOUT = 180  # Sekunden für einen Abschnitt
+
 EMPTY_EXIT_CODE = 3
 INCOMPLETE_EXIT_CODE = 4
 RETRY_DELAY = 10  # Sekunden; OneNote startet manchmal kurz neu
@@ -51,7 +60,9 @@ def _run(*args: str, timeout: float = 300) -> str:
     try:
         proc = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace", timeout=timeout,
                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    except (OSError, subprocess.TimeoutExpired) as e:
+    except subprocess.TimeoutExpired as e:
+        raise OneNoteStuck(STUCK_MESSAGE) from e
+    except OSError as e:
         raise OneNoteError(f"OneNote-Export fehlgeschlagen: {e}") from e
     lines = (proc.stderr or proc.stdout or "").strip().splitlines()
     if proc.returncode == EMPTY_EXIT_CODE:
@@ -76,7 +87,7 @@ def export_section(section_id: str, target: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp = target.with_name(target.stem + ".neu.pdf")
     try:
-        _run("-Action", "export", "-SectionId", section_id, "-OutFile", str(tmp))
+        _run("-Action", "export", "-SectionId", section_id, "-OutFile", str(tmp), timeout=EXPORT_TIMEOUT)
         check_pdf(tmp)
         tmp.replace(target)
     finally:
@@ -130,6 +141,8 @@ def sync(progress=lambda _msg: None, *, lister=None, exporter=None, force: bool 
             db.set_sync_state(ext_id, section["lastModified"])
             result["empty"] += 1
             continue
+        except OneNoteStuck:
+            raise  # Synchronisierung abbrechen; die Meldung erscheint in der App
         except IncompleteSection as e:
             # Nichts speichern, damit der Abschnitt beim nächsten Mal sicher nochmals drankommt
             result["incomplete"].append({"path": section["path"], "error": str(e)})
@@ -154,7 +167,7 @@ def sync(progress=lambda _msg: None, *, lister=None, exporter=None, force: bool 
 def _export_with_retry(exporter, section_id: str, target: Path) -> None:
     try:
         exporter(section_id, target)
-    except (EmptySection, IncompleteSection):
+    except (EmptySection, IncompleteSection, OneNoteStuck):
         raise
     except OneNoteError:
         time.sleep(RETRY_DELAY)

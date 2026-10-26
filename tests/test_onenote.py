@@ -156,3 +156,26 @@ def test_force_exports_everything_again():
     calls.clear()
     result = onenote.sync(lister=make_sections, exporter=fake_exporter(calls), force=True)
     assert result["updated"] == 2 and calls == ["{A}", "{B}"]
+
+
+def test_stuck_onenote_stops_the_sync_with_a_clear_message():
+    calls = []
+
+    def stuck(section_id, target):
+        calls.append(section_id)
+        raise onenote.OneNoteStuck(onenote.STUCK_MESSAGE)
+
+    with pytest.raises(onenote.OneNoteStuck, match="Drucker"):
+        onenote.sync(lister=make_sections, exporter=stuck)
+    assert calls == ["{A}"]  # nicht alle Abschnitte einzeln abwarten
+
+
+def test_export_timeout_becomes_stuck_error(monkeypatch, tmp_path):
+    import subprocess
+
+    def hang(*args, **kwargs):
+        raise subprocess.TimeoutExpired("powershell", 180)
+
+    monkeypatch.setattr(onenote.subprocess, "run", hang)
+    with pytest.raises(onenote.OneNoteStuck):
+        onenote.export_section("{A}", tmp_path / "a.pdf")
