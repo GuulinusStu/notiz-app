@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Notiz-App</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>📚 Notiz-App</h1>
+    <nav>
+      <button data-view="notes" class="active">Notizen</button>
+      <button data-view="ask">Fragen</button>
+      <button data-view="cards">Karteikarten <span id="due-badge" class="badge" hidden></span></button>
+    </nav>
+  </header>
+  <div id="status-bar" hidden></div>
+
+  <main>
+    <!-- Notizen -->
+    <section id="view-notes" class="view">
+      <div class="grid">
+        <div class="card">
+          <h2>🎙️ Unterricht aufnehmen</h2>
+          <input id="rec-title" placeholder="Titel, z. B. Mathe – Brüche">
+          <input id="rec-subject" placeholder="Fach (optional)">
+          <div class="row">
+            <button id="rec-start" class="primary">Aufnahme starten</button>
+            <button id="rec-stop" hidden>Stopp &amp; speichern</button>
+            <span id="rec-time"></span>
+          </div>
+          <p class="hint">Fenster offen lassen und Laptop nicht zuklappen. Bitte vorher das Einverständnis der Lehrperson einholen.</p>
+          <details>
+            <summary>Oder Audiodatei hochladen</summary>
+            <input type="file" id="audio-file" accept="audio/*,video/mp4,.m4a,.mp3,.wav,.webm,.ogg">
+            <button id="audio-upload">Hochladen</button>
+          </details>
+        </div>
+
+        <div class="card">
+          <h2>📄 OneNote-PDFs importieren</h2>
+          <p class="hint">In OneNote am PC: Datei → Exportieren → Abschnitt → PDF. Du kannst mehrere PDFs auf einmal wählen.</p>
+          <input id="pdf-subject" placeholder="Fach (optional)">
+          <input type="file" id="pdf-files" accept=".pdf" multiple>
+          <button id="pdf-upload" class="primary">Importieren</button>
+          <details>
+            <summary>Oder Text einfügen</summary>
+            <input id="note-title" placeholder="Titel">
+            <textarea id="note-text" rows="6" placeholder="Text aus OneNote hier einfügen…"></textarea>
+            <button id="note-save">Speichern</button>
+          </details>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="row between">
+          <h2>Meine Notizen</h2>
+          <input id="filter" placeholder="Filtern…">
+        </div>
+        <ul id="doc-list" class="doc-list"></ul>
+      </div>
+    </section>
+
+    <!-- Detail -->
+    <section id="view-doc" class="view" hidden>
+      <button id="back" class="link">← Zurück</button>
+      <div class="card">
+        <div class="row between">
+          <h2 id="doc-title"></h2>
+          <button id="doc-delete" class="danger">Löschen</button>
+        </div>
+        <p id="doc-meta" class="hint"></p>
+        <div class="row wrap">
+          <button id="doc-summary" class="primary">Zusammenfassen</button>
+          <button id="doc-quiz">Quiz starten</button>
+          <button id="doc-cards">Karteikarten erstellen</button>
+          <button id="doc-retry" hidden>Nochmals verarbeiten</button>
+        </div>
+        <div id="doc-output"></div>
+        <div id="doc-summary-box"></div>
+        <details id="doc-clean-box"><summary>Bereinigter Text</summary><pre id="doc-clean"></pre></details>
+        <details id="doc-raw-box"><summary>Originaltext / Transkript</summary><pre id="doc-raw"></pre></details>
+      </div>
+    </section>
+
+    <!-- Fragen -->
+    <section id="view-ask" class="view" hidden>
+      <div class="card">
+        <h2>💬 Frag deine Notizen</h2>
+        <div id="chat"></div>
+        <form id="ask-form" class="row">
+          <input id="ask-input" placeholder="z. B. Was ist der Unterschied zwischen Mitose und Meiose?" autocomplete="off">
+          <button class="primary">Fragen</button>
+        </form>
+      </div>
+    </section>
+
+    <!-- Karteikarten -->
+    <section id="view-cards" class="view" hidden>
+      <div class="card">
+        <h2>🃏 Karteikarten lernen</h2>
+        <div id="flashcard-area"></div>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
