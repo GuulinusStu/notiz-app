@@ -1,4 +1,11 @@
+import pytest
+
 from app import db, onenote
+
+
+@pytest.fixture(autouse=True)
+def no_retry_delay(monkeypatch):
+    monkeypatch.setattr(onenote, "RETRY_DELAY", 0)
 
 
 def make_sections(modified="2026-10-01T10:00:00Z"):
@@ -19,7 +26,7 @@ def fake_exporter(calls):
 def test_sync_only_exports_new_or_changed_sections():
     calls = []
     first = onenote.sync(lister=make_sections, exporter=fake_exporter(calls))
-    assert first == {"sections": 2, "new": 2, "updated": 0, "unchanged": 0, "failed": []}
+    assert first == {"sections": 2, "new": 2, "updated": 0, "unchanged": 0, "empty": 0, "failed": []}
     docs = {d["title"]: d for d in db.list_documents()}
     assert docs["Mathe / Brüche"]["subject"] == "Mathe"
 
@@ -64,3 +71,31 @@ def test_old_database_gets_new_columns(tmp_path, monkeypatch):
     db.init()
     doc_id = db.create_document("x", "pdf", external_id="onenote:{X}", external_modified="t")
     assert db.documents_by_external_prefix("onenote:")["onenote:{X}"]["id"] == doc_id
+
+
+def test_empty_sections_are_remembered_not_failed():
+    calls = []
+
+    def empty(section_id, target):
+        calls.append(section_id)
+        raise onenote.EmptySection("Abschnitt ist leer")
+
+    first = onenote.sync(lister=make_sections, exporter=empty)
+    assert first["empty"] == 2 and first["failed"] == [] and len(calls) == 2
+    second = onenote.sync(lister=make_sections, exporter=empty)
+    assert second["empty"] == 2 and len(calls) == 2  # nicht nochmals versucht
+    assert db.list_documents() == []
+
+
+def test_temporary_failure_is_retried_once():
+    attempts = []
+
+    def flaky(section_id, target):
+        attempts.append(section_id)
+        if attempts.count(section_id) == 1:
+            raise onenote.OneNoteError("OneNote startet neu")
+        fake_exporter([])(section_id, target)
+
+    result = onenote.sync(lister=make_sections, exporter=flaky)
+    assert result["new"] == 2 and result["failed"] == []
+    assert attempts == ["{A}", "{A}", "{B}", "{B}"]

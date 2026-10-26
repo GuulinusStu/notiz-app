@@ -218,7 +218,7 @@ function renderOnenote(s) {
   else if (s.error) text = "⚠️ " + s.error;
   else if (s.result) {
     const r = s.result;
-    text = `✅ ${r.sections} Abschnitte: ${r.new} neu, ${r.updated} aktualisiert, ${r.unchanged} unverändert`;
+    text = `✅ ${r.sections} Abschnitte: ${r.new} neu, ${r.updated} aktualisiert, ${r.unchanged} unverändert, ${r.empty ?? 0} leer`;
     if (r.failed.length) text += `, ${r.failed.length} fehlgeschlagen (${r.failed.map((f) => f.path).join(", ")})`;
   }
   $("#onenote-status").textContent = text;

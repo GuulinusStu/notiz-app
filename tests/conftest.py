@@ -12,8 +12,13 @@ def temp_data(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DATA_DIR", tmp_path)
     monkeypatch.setattr(config, "DB_PATH", tmp_path / "test.db")
     monkeypatch.setattr(config, "UPLOAD_DIR", tmp_path / "uploads")
-    from app import db
+    from app import db, worker
     db.init()
+    yield
+    # Aufträge aus diesem Test nicht in den nächsten Test mitnehmen
+    while not worker._jobs.empty():
+        worker._jobs.get_nowait()
+        worker._jobs.task_done()
 
 
 def fake_embed(texts, batch_size=16):

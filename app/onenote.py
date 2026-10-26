@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 from . import config, db, worker
@@ -25,6 +26,13 @@ class OneNoteError(RuntimeError):
     pass
 
 
+class EmptySection(OneNoteError):
+    pass
+
+EMPTY_EXIT_CODE = 3
+RETRY_DELAY = 10  # Sekunden; OneNote startet manchmal kurz neu
+
+
 def available() -> bool:
     return sys.platform == "win32"
 
@@ -33,10 +41,12 @@ def _run(*args: str, timeout: float = 300) -> None:
     cmd = ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "RemoteSigned",
            "-File", str(SCRIPT), *args]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
+        proc = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace", timeout=timeout,
                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except (OSError, subprocess.TimeoutExpired) as e:
         raise OneNoteError(f"OneNote-Export fehlgeschlagen: {e}") from e
+    if proc.returncode == EMPTY_EXIT_CODE:
+        raise EmptySection("Abschnitt ist leer")
     if proc.returncode != 0:
         lines = (proc.stderr or proc.stdout or "").strip().splitlines()
         raise OneNoteError(lines[0] if lines else f"OneNote-Export fehlgeschlagen (Code {proc.returncode})")
@@ -71,7 +81,8 @@ def sync(progress=lambda _msg: None, *, lister=None, exporter=None) -> dict:
     sections = lister()
     known = db.documents_by_external_prefix(PREFIX)
     export_dir = config.DATA_DIR / "onenote"
-    result = {"sections": len(sections), "new": 0, "updated": 0, "unchanged": 0, "failed": []}
+    empty = db.sync_states(PREFIX)
+    result = {"sections": len(sections), "new": 0, "updated": 0, "unchanged": 0, "empty": 0, "failed": []}
 
     for i, section in enumerate(sections, start=1):
         ext_id = PREFIX + section["id"]
@@ -79,10 +90,17 @@ def sync(progress=lambda _msg: None, *, lister=None, exporter=None) -> dict:
         if doc and doc["external_modified"] == section["lastModified"]:
             result["unchanged"] += 1
             continue
+        if not doc and empty.get(ext_id) == section["lastModified"]:
+            result["empty"] += 1
+            continue
         progress(f"Exportiere {i}/{len(sections)}: {section['path']}")
         target = export_dir / pdf_name(section)
         try:
-            exporter(section["id"], target)
+            _export_with_retry(exporter, section["id"], target)
+        except EmptySection:
+            db.set_sync_state(ext_id, section["lastModified"])
+            result["empty"] += 1
+            continue
         except OneNoteError as e:
             result["failed"].append({"path": section["path"], "error": str(e)})
             continue
@@ -97,6 +115,16 @@ def sync(progress=lambda _msg: None, *, lister=None, exporter=None) -> dict:
             worker.enqueue(doc_id)
             result["new"] += 1
     return result
+
+
+def _export_with_retry(exporter, section_id: str, target: Path) -> None:
+    try:
+        exporter(section_id, target)
+    except EmptySection:
+        raise
+    except OneNoteError:
+        time.sleep(RETRY_DELAY)
+        exporter(section_id, target)
 
 
 def status() -> dict:

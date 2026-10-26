@@ -17,6 +17,8 @@ def _run() -> None:
         doc_id = _jobs.get()
         try:
             ingest.process(doc_id)
+        except Exception as e:  # der Worker darf nie sterben, sonst bleibt alles in der Warteschlange
+            print(f"Fehler bei Dokument {doc_id}: {e}")
         finally:
             _jobs.task_done()
 

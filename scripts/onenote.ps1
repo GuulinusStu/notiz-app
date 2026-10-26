@@ -1,4 +1,4 @@
-# Spricht mit der OneNote-App am PC (Microsoft 365 / OneNote 2016) über ihre COM-Schnittstelle.
+﻿# Spricht mit der OneNote-App am PC (Microsoft 365 / OneNote 2016) über ihre COM-Schnittstelle.
 #   -Action list   -OutFile x.json              Alle Abschnitte als JSON auflisten
 #   -Action export -SectionId ID -OutFile x.pdf Einen Abschnitt als PDF exportieren
 param(
@@ -7,6 +7,13 @@ param(
     [string]$SectionId
 )
 $ErrorActionPreference = "Stop"
+[Console]::OutputEncoding = [Text.Encoding]::UTF8
+
+function Get-ErrorCode($err) {
+    $ex = $err.Exception
+    while ($ex.InnerException) { $ex = $ex.InnerException }
+    return @(('{0:X8}' -f $ex.HResult), $ex.Message.Trim())
+}
 
 try {
     $onenote = New-Object -ComObject OneNote.Application
@@ -50,6 +57,16 @@ if ($Action -eq "export") {
     if (-not $SectionId) { [Console]::Error.WriteLine("SectionId fehlt"); exit 1 }
     try { $onenote.SyncHierarchy($SectionId) } catch { }   # neueste Version holen, falls möglich
     if (Test-Path -LiteralPath $OutFile) { Remove-Item -LiteralPath $OutFile -Force }
-    $onenote.Publish($SectionId, $OutFile, 3, "")          # 3 = pfPDF
+    try {
+        $onenote.Publish($SectionId, $OutFile, 3, "")      # 3 = pfPDF
+    } catch {
+        $code, $message = Get-ErrorCode $_
+        if ($code -eq "80042006") {                        # OneNote exportiert leere Abschnitte nicht
+            [Console]::Error.WriteLine("Abschnitt ist leer")
+            exit 3
+        }
+        [Console]::Error.WriteLine("Export fehlgeschlagen (0x$code): $message")
+        exit 1
+    }
     exit 0
 }

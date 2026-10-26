@@ -30,6 +30,10 @@ CREATE TABLE IF NOT EXISTS chunks (
   embedding BLOB
 );
 CREATE INDEX IF NOT EXISTS chunks_doc ON chunks(doc_id);
+CREATE TABLE IF NOT EXISTS sync_state (     -- z. B. leere OneNote-Abschnitte, die nichts zu importieren haben
+  external_id TEXT PRIMARY KEY,
+  modified TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS flashcards (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   doc_id INTEGER REFERENCES documents(id) ON DELETE CASCADE,
@@ -123,6 +127,18 @@ def documents_by_external_prefix(prefix: str) -> dict[str, dict]:
             (prefix.replace("%", "") + "%",),
         )
         return {r["external_id"]: dict(r) for r in rows}
+
+
+def sync_states(prefix: str) -> dict[str, str]:
+    with session() as c:
+        rows = c.execute("SELECT external_id, modified FROM sync_state WHERE external_id LIKE ?",
+                         (prefix.replace("%", "") + "%",))
+        return {r["external_id"]: r["modified"] for r in rows}
+
+
+def set_sync_state(external_id: str, modified: str) -> None:
+    with session() as c:
+        c.execute("INSERT OR REPLACE INTO sync_state (external_id, modified) VALUES (?, ?)", (external_id, modified))
 
 
 def documents_with_status(*statuses: str) -> list[int]:
