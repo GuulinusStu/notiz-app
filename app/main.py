@@ -207,11 +207,15 @@ def onenote_status():
     return onenote.status()
 
 
+class SyncIn(BaseModel):
+    force: bool = False  # alle Abschnitte neu exportieren, nicht nur geänderte
+
+
 @app.post("/api/onenote/sync")
-def onenote_sync():
+def onenote_sync(body: SyncIn | None = None):
     if not onenote.available():
         raise HTTPException(400, "Der automatische OneNote-Export funktioniert nur unter Windows.")
-    onenote.start_sync()
+    onenote.start_sync(force=bool(body and body.force))
     return onenote.status()
 
 

@@ -1,10 +1,12 @@
 ﻿# Spricht mit der OneNote-App am PC (Microsoft 365 / OneNote 2016) über ihre COM-Schnittstelle.
 #   -Action list   -OutFile x.json              Alle Abschnitte als JSON auflisten
 #   -Action export -SectionId ID -OutFile x.pdf Einen Abschnitt als PDF exportieren
+#   Exit-Codes: 2 = OneNote fehlt, 3 = Abschnitt leer, 4 = noch nicht vollständig heruntergeladen
 param(
     [Parameter(Mandatory = $true)][ValidateSet("list", "export")][string]$Action,
     [Parameter(Mandatory = $true)][string]$OutFile,
-    [string]$SectionId
+    [string]$SectionId,
+    [int]$WaitSeconds = 60
 )
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
@@ -56,6 +58,42 @@ if ($Action -eq "list") {
 if ($Action -eq "export") {
     if (-not $SectionId) { [Console]::Error.WriteLine("SectionId fehlt"); exit 1 }
     try { $onenote.SyncHierarchy($SectionId) } catch { }   # neueste Version holen, falls möglich
+
+    # Sicherstellen, dass alle Seiten wirklich auf dem PC sind. Seiten aus der Cloud, die OneNote noch
+    # nicht heruntergeladen hat, lassen sich nicht lesen. Dann warten wir kurz und brechen sonst ab,
+    # statt einen halb leeren Abschnitt zu exportieren.
+    $deadline = (Get-Date).AddSeconds($WaitSeconds)
+    while ($true) {
+        $missing = @()
+        try {
+            $pagesXml = ""
+            $onenote.GetHierarchy($SectionId, 4, [ref]$pagesXml)   # 4 = hsPages
+            [xml]$px = $pagesXml
+            $pns = New-Object System.Xml.XmlNamespaceManager($px.NameTable)
+            $pns.AddNamespace("one", $px.DocumentElement.NamespaceURI)
+            $pages = @($px.SelectNodes("//one:Page", $pns))
+        } catch {
+            $pages = @()
+            $missing += "Seitenliste"
+        }
+        foreach ($page in $pages) {
+            try {
+                $content = ""
+                $onenote.GetPageContent($page.ID, [ref]$content, 0)
+                if (-not $content) { $missing += $page.name }
+            } catch {
+                $missing += $page.name
+            }
+        }
+        if ($missing.Count -eq 0) { break }
+        if ((Get-Date) -gt $deadline) {
+            [Console]::Error.WriteLine("Noch nicht vollständig heruntergeladen: " + (($missing | Select-Object -First 3) -join ", "))
+            exit 4
+        }
+        Start-Sleep -Seconds 3
+        try { $onenote.SyncHierarchy($SectionId) } catch { }
+    }
+    [Console]::Out.WriteLine("PAGES=" + $pages.Count)
     if (Test-Path -LiteralPath $OutFile) { Remove-Item -LiteralPath $OutFile -Force }
     try {
         $onenote.Publish($SectionId, $OutFile, 3, "")      # 3 = pfPDF

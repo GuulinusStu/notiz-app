@@ -6,6 +6,7 @@ import zlib
 # Vor dem Import der App: Hintergrund-Threads, die einen Test überleben, dürfen nie die echten Daten anfassen.
 os.environ["NOTIZAPP_DATA"] = tempfile.mkdtemp(prefix="notizapp-test-")
 os.environ["NOTIZAPP_ONENOTE_AUTO_SYNC"] = "0"
+os.environ["NOTIZAPP_AUTO_RETRY"] = "0"
 
 import numpy as np
 import pytest

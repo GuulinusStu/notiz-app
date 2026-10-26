@@ -256,7 +256,8 @@ function docItem(d, label, showSubject) {
   return `<li data-id="${d.id}" tabindex="0">
     <span class="label">${KIND[d.kind] || ""} ${esc(label)}
       ${showSubject && d.subject && subject === null ? `<span class="tag">${esc(d.subject)}</span>` : ""}
-      ${d.progress ? `<span class="progress">${esc(d.progress)}</span>` : ""}</span>
+      ${d.progress ? `<span class="progress">${esc(d.progress)}</span>`
+        : d.images_missing ? `<span class="progress">${plural(d.images_missing, "Bildseite wird", "Bildseiten werden")} später noch gelesen</span>` : ""}</span>
     <span class="row" style="gap:6px;flex-wrap:nowrap">
       ${d.created_at && showSubject ? `<span class="hint" style="margin:0">${dateText(d.created_at)}</span>` : ""}
       ${d.has_file && d.kind === "pdf" ? `<a class="file-link" href="/api/documents/${d.id}/file" target="_blank" title="PDF öffnen">PDF</a>` : ""}
@@ -323,7 +324,8 @@ async function openDoc(id, keepOutput = false) {
   if (currentView !== "doc") show("doc");
   $("#doc-title").textContent = doc.title.split(" / ").pop();
   const meta = [KIND_NAME[doc.kind], doc.title.includes(" / ") ? doc.title.split(" / ").slice(0, -1).join(" › ") : "",
-    `hinzugefügt ${dateText(doc.created_at)}`, doc.status !== "ready" ? STATUS[doc.status] : "", doc.progress];
+    `hinzugefügt ${dateText(doc.created_at)}`, doc.status !== "ready" ? STATUS[doc.status] : "", doc.progress,
+    doc.images_missing ? `${plural(doc.images_missing, "Bildseite", "Bildseiten")} mit Handschrift noch nicht gelesen (Tageslimit), wird automatisch nachgeholt` : ""];
   $("#doc-meta").innerHTML = esc(meta.filter(Boolean).join(", ")) + (doc.error ? `<br><span class="error-text">${esc(doc.error)}</span>` : "");
   fillSubjectSelect($("#doc-subject"), doc.subject);
   const ready = doc.status === "ready";
@@ -635,6 +637,7 @@ function renderOnenote(s) {
   else if (s.result) {
     const r = s.result;
     text = `Fertig: ${r.new} neu, ${r.updated} aktualisiert, ${r.unchanged} unverändert` + (r.empty ? `, ${r.empty} leer` : "");
+    if (r.incomplete?.length) text += `, ${r.incomplete.length} noch nicht fertig von OneNote geladen (wird in 5 Minuten nochmals versucht)`;
     if (r.failed.length) text += `, ${r.failed.length} fehlgeschlagen`;
   }
   $("#onenote-status").textContent = text;

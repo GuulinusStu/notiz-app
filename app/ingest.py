@@ -70,21 +70,61 @@ def split_lines(text: str, max_words: int) -> list[str]:
 MIN_PAGE_WORDS = 25  # weniger Text auf einer Seite = vermutlich Bild, Scan oder Handschrift
 
 
-def extract_pdf_text(path: Path, progress: ProgressFn = lambda _: None, read_images: bool = False) -> str:
-    """Liest den Text eines PDFs. Seiten fast ohne Text werden auf Wunsch von der KI abgeschrieben."""
+class PdfText(str):
+    """Text eines PDFs; images_missing zählt Bildseiten, die die KI (noch) nicht lesen konnte."""
+    images_missing = 0
+
+
+def extract_pdf_text(path: Path, progress: ProgressFn = lambda _: None, read_images: bool = False) -> PdfText:
+    """Liest den Text eines PDFs. Seiten fast ohne Text werden auf Wunsch von der KI abgeschrieben.
+
+    Abgeschriebene Seiten werden gespeichert. Ist das Tageslimit erreicht, wird der Rest
+    übersprungen und beim nächsten Mal dort weitergemacht.
+    """
+    import hashlib
+
     import pymupdf
 
-    pages = []
+    pages, missing, limit_hit = [], 0, False
+    model = llm.vision_model() if read_images else ""
     with pymupdf.open(path) as pdf:
         for i, page in enumerate(pdf, start=1):
             text = page.get_text().strip()
             if read_images and len(text.split()) < MIN_PAGE_WORDS and _has_visual_content(page):
-                progress(f"Erkenne Bild/Handschrift auf Seite {i} von {pdf.page_count}…")
                 png = page.get_pixmap(dpi=130).tobytes("png")
-                text = (text + "\n" + llm.read_image(png)).strip()
+                key = hashlib.sha1(png).hexdigest() + ":" + model
+                seen = db.cached_page(key)
+                if seen is None and not limit_hit:
+                    progress(f"Erkenne Bild/Handschrift auf Seite {i} von {pdf.page_count}…")
+                    seen = _read_page(png)
+                    if seen is LIMIT:
+                        limit_hit, seen = True, None
+                    elif seen is not None:
+                        db.cache_page(key, seen)
+                if seen is None:
+                    missing += 1
+                else:
+                    text = (text + "\n" + seen).strip()
             if text:
                 pages.append(f"--- Seite {i} ---\n{text}")
-    return "\n\n".join(pages)
+    result = PdfText("\n\n".join(pages))
+    result.images_missing = missing
+    return result
+
+
+LIMIT = object()
+
+
+def _read_page(png: bytes):
+    """Eine Bildseite abschreiben. None = ging nicht (später nochmals), LIMIT = Tageslimit erreicht."""
+    for _attempt in range(2):
+        try:
+            return llm.read_image(png)
+        except llm.LimitError:
+            return LIMIT
+        except llm.LLMError:
+            continue  # z. B. Zeitüberschreitung: einmal nochmals versuchen
+    return None
 
 
 def _has_visual_content(page) -> bool:
@@ -200,8 +240,11 @@ def process(doc_id: int) -> None:
             progress("Lese PDF…")
             raw = extract_pdf_text(Path(doc["source_path"]), progress, read_images=bool(llm.vision_model()))
             if not raw.strip():
+                if raw.images_missing:
+                    raise llm.LimitError("Die Seiten sind Bilder oder Handschrift, und die KI konnte sie noch nicht lesen "
+                                         "(Tageslimit). Wird automatisch später nochmals versucht.")
                 raise ValueError("Im PDF wurde kein Text gefunden (evtl. nur Bilder oder Handschrift).")
-            db.update_document(doc_id, raw_text=raw, clean_text=raw)
+            db.update_document(doc_id, raw_text=str(raw), clean_text=str(raw), images_missing=raw.images_missing)
             index(doc_id, raw, progress)
         elif doc["kind"] == "text":
             db.update_document(doc_id, clean_text=doc["raw_text"])

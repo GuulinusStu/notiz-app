@@ -23,3 +23,5 @@ WHISPER_LANGUAGE = os.environ.get("NOTIZAPP_WHISPER_LANGUAGE", "de")
 
 # OneNote-Abschnitte beim Start der App automatisch exportieren (nur Windows)
 ONENOTE_AUTO_SYNC = os.environ.get("NOTIZAPP_ONENOTE_AUTO_SYNC", "1") == "1"
+# Bildseiten, die wegen des Tageslimits fehlen, alle paar Stunden nochmals versuchen
+AUTO_RETRY = os.environ.get("NOTIZAPP_AUTO_RETRY", "1") == "1"

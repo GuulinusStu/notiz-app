@@ -56,6 +56,10 @@ CREATE TABLE IF NOT EXISTS sync_state (     -- z. B. leere OneNote-Abschnitte, d
   external_id TEXT PRIMARY KEY,
   modified TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS page_cache (     -- schon von der KI abgeschriebene Bildseiten
+  key TEXT PRIMARY KEY,
+  text TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS flashcards (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   doc_id INTEGER REFERENCES documents(id) ON DELETE CASCADE,
@@ -69,10 +73,11 @@ CREATE TABLE IF NOT EXISTS flashcards (
 """
 
 DOC_FIELDS = {"title", "subject", "status", "progress", "source_path",
-              "raw_text", "clean_text", "summary", "error", "external_modified"}
+              "raw_text", "clean_text", "summary", "error", "external_modified", "images_missing"}
 
 # Spalten, die nach der ersten Version dazugekommen sind
-MIGRATIONS = {"external_id": "TEXT", "external_modified": "TEXT"}
+MIGRATIONS = {"external_id": "TEXT", "external_modified": "TEXT",
+              "images_missing": "INTEGER NOT NULL DEFAULT 0"}
 
 
 def connect() -> sqlite3.Connection:
@@ -136,7 +141,7 @@ def get_document(doc_id: int) -> dict | None:
 def list_documents() -> list[dict]:
     with session() as c:
         rows = c.execute(
-            "SELECT id, title, kind, subject, status, progress, error, created_at, external_id,"
+            "SELECT id, title, kind, subject, status, progress, error, created_at, external_id, images_missing,"
             " source_path IS NOT NULL AS has_file,"
             " length(summary) > 0 AS has_summary FROM documents ORDER BY created_at DESC"
         ).fetchall()
@@ -174,6 +179,23 @@ def documents_with_status(*statuses: str) -> list[int]:
     with session() as c:
         rows = c.execute(f"SELECT id FROM documents WHERE status IN ({marks}) ORDER BY id", statuses)
         return [r["id"] for r in rows]
+
+
+def documents_with_missing_images() -> list[int]:
+    with session() as c:
+        rows = c.execute("SELECT id FROM documents WHERE status = 'ready' AND images_missing > 0 ORDER BY id")
+        return [r["id"] for r in rows]
+
+
+def cached_page(key: str) -> str | None:
+    with session() as c:
+        row = c.execute("SELECT text FROM page_cache WHERE key = ?", (key,)).fetchone()
+        return row["text"] if row else None
+
+
+def cache_page(key: str, text: str) -> None:
+    with session() as c:
+        c.execute("INSERT OR REPLACE INTO page_cache (key, text) VALUES (?, ?)", (key, text))
 
 
 def delete_document(doc_id: int) -> dict | None:

@@ -132,19 +132,78 @@ def test_reindex_keeps_text(fake_llm):
     assert study.search("Inhalt")[0]["doc_id"] == doc_id
 
 
-def test_pdf_pages_without_text_are_read_by_vision_model(tmp_path, monkeypatch):
+def handwritten_pdf(path, handwritten_pages=1):
     import pymupdf
-    path = tmp_path / "hand.pdf"
     with pymupdf.open() as pdf:
-        page = pdf.new_page()
-        page.insert_text((72, 40), "Zahlensysteme Seite 1")
-        for i in range(6):  # "Handschrift" als Striche
-            page.draw_line((72, 100 + i * 20), (300, 110 + i * 20))
+        for n in range(handwritten_pages):
+            page = pdf.new_page()
+            page.insert_text((72, 40), f"Zahlensysteme Seite {n + 1}")
+            for i in range(6):  # "Handschrift" als Striche
+                page.draw_line((72, 100 + i * 20), (300 + n, 110 + i * 20))
         pdf.new_page().insert_text((72, 72), " ".join(["Wort"] * 40))
         pdf.save(path)
+    return path
+
+
+def test_pdf_pages_without_text_are_read_by_vision_model(tmp_path, monkeypatch):
+    path = handwritten_pdf(tmp_path / "hand.pdf")
+    monkeypatch.setattr(llm, "vision_model", lambda: "bild-modell")
     calls = []
-    monkeypatch.setattr(llm, "read_image", lambda png: calls.append(png) or "Das Binärsystem hat die Basis 2.")
+    monkeypatch.setattr(llm, "read_image", lambda png, **kw: calls.append(png) or "Das Binärsystem hat die Basis 2.")
     text = ingest.extract_pdf_text(path, read_images=True)
     assert len(calls) == 1 and calls[0].startswith(b"\x89PNG")
     assert "Basis 2" in text and "Seite 2" in text
     assert "Basis 2" not in ingest.extract_pdf_text(path)  # ohne Bild-Modell nur Text
+
+
+def test_read_pages_are_cached_and_limit_resumes_later(tmp_path, monkeypatch):
+    path = handwritten_pdf(tmp_path / "hand.pdf", handwritten_pages=3)
+    monkeypatch.setattr(llm, "vision_model", lambda: "bild-modell")
+    calls = []
+
+    def limited(png, **kw):
+        calls.append(png)
+        if len(calls) > 1:
+            raise llm.LimitError("OpenRouter-Limit erreicht")
+        return "Seite gelesen"
+
+    monkeypatch.setattr(llm, "read_image", limited)
+    first = ingest.extract_pdf_text(path, read_images=True)
+    assert first.count("Seite gelesen") == 1 and first.images_missing == 2
+    assert len(calls) == 2  # nach dem Limit nicht weiter versucht
+
+    calls.clear()
+    monkeypatch.setattr(llm, "read_image", lambda png, **kw: calls.append(png) or "Seite gelesen")
+    second = ingest.extract_pdf_text(path, read_images=True)
+    assert second.count("Seite gelesen") == 3 and second.images_missing == 0
+    assert len(calls) == 2  # die erste Seite kam aus dem Speicher
+
+
+def test_timeout_on_a_page_is_retried_then_skipped(tmp_path, monkeypatch):
+    path = handwritten_pdf(tmp_path / "hand.pdf", handwritten_pages=2)
+    monkeypatch.setattr(llm, "vision_model", lambda: "bild-modell")
+    calls = []
+
+    def hangs_on_first(png, **kw):
+        calls.append(png)
+        if png == calls[0]:
+            raise llm.LLMError("OpenRouter ist nicht erreichbar: timed out")
+        return "zweite Seite"
+
+    monkeypatch.setattr(llm, "read_image", hangs_on_first)
+    text = ingest.extract_pdf_text(path, read_images=True)
+    assert "zweite Seite" in text and text.images_missing == 1
+    assert len(calls) == 3  # erste Seite zweimal versucht, dann weiter
+
+
+def test_unread_images_are_retried_automatically(fake_llm, tmp_path, monkeypatch):
+    from app import worker
+    doc_id = db.create_document("Hand", "pdf", "Mathe", str(tmp_path / "x.pdf"))
+    db.update_document(doc_id, status="ready", images_missing=3)
+    other = db.create_document("Limit", "pdf", "Mathe", str(tmp_path / "y.pdf"))
+    db.update_document(other, status="error", error="OpenRouter-Limit erreicht")
+    queued = []
+    monkeypatch.setattr(worker, "enqueue", queued.append)
+    assert worker.retry_unread_images() == 2
+    assert queued == [doc_id, other]
+    assert db.get_document(other)["status"] == "pending"

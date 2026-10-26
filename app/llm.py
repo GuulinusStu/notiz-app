@@ -13,6 +13,10 @@ class LLMError(RuntimeError):
     pass
 
 
+class LimitError(LLMError):
+    """Tageslimit oder Guthaben bei OpenRouter aufgebraucht."""
+
+
 _THINK = re.compile(r"<think>.*?</think>", re.S)
 
 # Bevorzugte Gratis-Modelle, falls in den Einstellungen nichts gewählt ist (erstes verfügbares gewinnt).
@@ -69,9 +73,9 @@ def chat(messages: list[dict], *, json_mode: bool = False, temperature: float = 
     if r.status_code == 401:
         raise LLMError("Der OpenRouter-Schlüssel ist ungültig. Bitte unter „Einstellungen“ prüfen.")
     if r.status_code == 402:
-        raise LLMError("Dein OpenRouter-Guthaben ist aufgebraucht. Lade Guthaben auf oder wähle ein Gratis-Modell.")
+        raise LimitError("Dein OpenRouter-Guthaben ist aufgebraucht. Lade Guthaben auf oder wähle ein Gratis-Modell.")
     if r.status_code == 429:
-        raise LLMError("OpenRouter-Limit erreicht (bei Gratis-Modellen gibt es ein Tageslimit). Bitte später nochmals versuchen.")
+        raise LimitError("OpenRouter-Limit erreicht (bei Gratis-Modellen gibt es ein Tageslimit). Bitte später nochmals versuchen.")
     if r.status_code >= 400:
         raise LLMError(f"OpenRouter-Fehler {r.status_code}: {_error_text(r)}")
     data = r.json()
@@ -119,7 +123,7 @@ Antworte nur mit dem Inhalt, auf Deutsch (Fachbegriffe so lassen, wie sie dasteh
 Wenn die Seite leer ist, antworte nur mit: (leer)"""
 
 
-def read_image(png: bytes) -> str:
+def read_image(png: bytes, timeout: float = 120) -> str:
     """Lässt ein Bild (z. B. eine Seite mit Handschrift) von einem Bild-fähigen Modell abschreiben."""
     import base64
 
@@ -129,7 +133,7 @@ def read_image(png: bytes) -> str:
     url = "data:image/png;base64," + base64.b64encode(png).decode()
     text = chat([{"role": "user", "content": [{"type": "text", "text": IMAGE_PROMPT},
                                                {"type": "image_url", "image_url": {"url": url}}]}],
-                model=model, temperature=0)
+                model=model, temperature=0, timeout=timeout)
     return "" if text.strip() == "(leer)" else text
 
 

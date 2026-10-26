@@ -26,7 +26,7 @@ def fake_exporter(calls):
 def test_sync_only_exports_new_or_changed_sections():
     calls = []
     first = onenote.sync(lister=make_sections, exporter=fake_exporter(calls))
-    assert first == {"sections": 2, "new": 2, "updated": 0, "unchanged": 0, "empty": 0, "failed": []}
+    assert first == {"sections": 2, "new": 2, "updated": 0, "unchanged": 0, "empty": 0, "incomplete": [], "failed": []}
     docs = {d["title"]: d for d in db.list_documents()}
     assert docs["Mathe / Brüche"]["subject"] == "Mathe"
 
@@ -99,3 +99,60 @@ def test_temporary_failure_is_retried_once():
     result = onenote.sync(lister=make_sections, exporter=flaky)
     assert result["new"] == 2 and result["failed"] == []
     assert attempts == ["{A}", "{A}", "{B}", "{B}"]
+
+
+def test_incomplete_sections_are_not_imported_and_tried_again():
+    calls = []
+
+    def not_loaded(section_id, target):
+        calls.append(section_id)
+        raise onenote.IncompleteSection("Noch nicht vollständig heruntergeladen: Seite 3")
+
+    first = onenote.sync(lister=make_sections, exporter=not_loaded)
+    assert len(first["incomplete"]) == 2 and first["new"] == 0 and first["failed"] == []
+    assert db.list_documents() == []
+    assert calls == ["{A}", "{B}"]  # kein sofortiger zweiter Versuch
+
+    second = onenote.sync(lister=make_sections, exporter=fake_exporter(calls))
+    assert second["new"] == 2
+
+
+def test_incomplete_update_keeps_the_old_pdf(monkeypatch, tmp_path):
+    target = tmp_path / "abschnitt.pdf"
+    target.write_bytes(b"alte Version")
+
+    def run(*args, **kwargs):
+        out = args[args.index("-OutFile") + 1]
+        open(out, "wb").close()  # OneNote liefert eine leere Datei
+        return ""
+
+    monkeypatch.setattr(onenote, "_run", run)
+    with pytest.raises(onenote.IncompleteSection):
+        onenote.export_section("{A}", target)
+    assert target.read_bytes() == b"alte Version"
+    assert not (tmp_path / "abschnitt.neu.pdf").exists()
+
+
+def test_complete_export_replaces_the_pdf(monkeypatch, tmp_path):
+    import pymupdf
+
+    target = tmp_path / "abschnitt.pdf"
+    target.write_bytes(b"alte Version")
+
+    def run(*args, **kwargs):
+        pdf = pymupdf.open()
+        pdf.new_page()
+        pdf.save(args[args.index("-OutFile") + 1])
+        return "PAGES=1"
+
+    monkeypatch.setattr(onenote, "_run", run)
+    onenote.export_section("{A}", target)
+    assert target.read_bytes().startswith(b"%PDF")
+
+
+def test_force_exports_everything_again():
+    calls = []
+    onenote.sync(lister=make_sections, exporter=fake_exporter(calls))
+    calls.clear()
+    result = onenote.sync(lister=make_sections, exporter=fake_exporter(calls), force=True)
+    assert result["updated"] == 2 and calls == ["{A}", "{B}"]
