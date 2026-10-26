@@ -25,3 +25,6 @@ WHISPER_LANGUAGE = os.environ.get("NOTIZAPP_WHISPER_LANGUAGE", "de")
 ONENOTE_AUTO_SYNC = os.environ.get("NOTIZAPP_ONENOTE_AUTO_SYNC", "1") == "1"
 # Bildseiten, die wegen des Tageslimits fehlen, alle paar Stunden nochmals versuchen
 AUTO_RETRY = os.environ.get("NOTIZAPP_AUTO_RETRY", "1") == "1"
+# Gratis-Modelle erlauben etwa 50 Anfragen pro Tag. Das Abschreiben von Handschrift im Hintergrund
+# darf davon nur einen Teil brauchen, damit Fragen, Quiz und Karteikarten immer funktionieren.
+IMAGE_DAILY_BUDGET = int(os.environ.get("NOTIZAPP_IMAGE_DAILY_BUDGET", "25"))

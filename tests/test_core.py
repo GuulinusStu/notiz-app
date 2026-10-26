@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from app import db, ingest, llm, srs, study
+from app import config, db, ingest, llm, srs, study
 
 
 def test_split_words_overlap_covers_everything():
@@ -207,3 +207,13 @@ def test_unread_images_are_retried_automatically(fake_llm, tmp_path, monkeypatch
     assert worker.retry_unread_images() == 2
     assert queued == [doc_id, other]
     assert db.get_document(other)["status"] == "pending"
+
+
+def test_image_reading_leaves_daily_requests_for_studying(tmp_path, monkeypatch):
+    path = handwritten_pdf(tmp_path / "hand.pdf", handwritten_pages=3)
+    monkeypatch.setattr(llm, "vision_model", lambda: "bild-modell")
+    monkeypatch.setattr(config, "IMAGE_DAILY_BUDGET", 2)
+    calls = []
+    monkeypatch.setattr(llm, "read_image", lambda png, **kw: calls.append(png) or "gelesen")
+    text = ingest.extract_pdf_text(path, read_images=True)
+    assert len(calls) == 2 and text.images_missing == 1

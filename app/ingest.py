@@ -115,9 +115,24 @@ def extract_pdf_text(path: Path, progress: ProgressFn = lambda _: None, read_ima
 LIMIT = object()
 
 
+def _image_budget_left() -> bool:
+    """Zählt die Bild-Anfragen pro Tag (UTC, wie OpenRouter) und hält sich an IMAGE_DAILY_BUDGET."""
+    import datetime
+
+    today = datetime.datetime.now(datetime.timezone.utc).date().isoformat()
+    day, _, count = db.get_setting("image_requests", "").partition(":")
+    used = int(count) if day == today and count.isdigit() else 0
+    if used >= config.IMAGE_DAILY_BUDGET:
+        return False
+    db.set_setting("image_requests", f"{today}:{used + 1}")
+    return True
+
+
 def _read_page(png: bytes):
     """Eine Bildseite abschreiben. None = ging nicht (später nochmals), LIMIT = Tageslimit erreicht."""
     for _attempt in range(2):
+        if not _image_budget_left():
+            return LIMIT  # Rest des Tageslimits bleibt fürs Lernen frei
         try:
             return llm.read_image(png)
         except llm.LimitError:
