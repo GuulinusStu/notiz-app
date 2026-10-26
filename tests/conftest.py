@@ -1,4 +1,5 @@
 import json
+import zlib
 
 import numpy as np
 import pytest
@@ -20,7 +21,7 @@ def fake_embed(texts, batch_size=16):
     vecs = np.zeros((len(texts), 64), dtype=np.float32)
     for i, t in enumerate(texts):
         for w in t.lower().split():
-            vecs[i, hash(w.strip(".,?!")) % 64] += 1
+            vecs[i, zlib.crc32(w.strip(".,?!").encode()) % 64] += 1
     return vecs
 
 
