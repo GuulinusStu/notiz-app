@@ -399,3 +399,30 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 }
 .doc-list li .pick { width: auto; margin: 0 8px 0 0; }
 .selecting .doc-list li { padding-left: 8px; }
+
+/* ---------- Heute, Fehlerheft, Timer, Aufnahme ---------- */
+
+.quota { font-size: .8rem; color: var(--muted); margin: 4px 2px 0; text-align: right; }
+.quota.low { color: var(--red); font-weight: 700; }
+#home-today { margin-bottom: 18px; }
+.today-list { list-style: none; padding: 0; margin: 8px 0 0; }
+.today-list li { display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 8px 0; border-bottom: 1px dashed var(--line); }
+.today-list li:last-child { border-bottom: 0; }
+.today-list .what { border-left: 5px solid var(--tab, var(--ink)); padding-left: 10px; }
+.today-list .what small { display: block; color: var(--muted); }
+.mistake { border-top: 1px solid var(--line); padding: 10px 0; }
+.mistake .q { font-weight: 700; }
+.mistake .a { color: var(--green); }
+.mistake .row { margin-top: 6px; }
+.mark-btn { border-color: #e0a800; font-weight: 700; }
+.mark-btn:active { transform: scale(.96); }
+.explain-box { margin-top: 10px; }
+.timer-dialog { border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper); color: var(--text); max-width: 460px; padding: 20px 22px; }
+.timer-dialog::backdrop { background: rgba(0, 0, 0, .35); }
+.timer-pill {
+  position: fixed; right: 18px; bottom: 18px; z-index: 40; padding: 10px 16px; border-radius: 999px;
+  background: var(--ink); color: #fff; border: 0; font-family: var(--font-head); font-weight: 800; font-size: 1.05rem;
+  box-shadow: var(--shadow);
+}
+.timer-pill.pause { background: var(--green); }
+@media (prefers-color-scheme: dark) { .timer-pill { color: #0f1a3d; } }

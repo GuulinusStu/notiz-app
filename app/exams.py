@@ -101,6 +101,25 @@ def plan(exam: dict, today: datetime.date | None = None) -> list[dict]:
     return result
 
 
+def today_tasks(exams: list[dict], today: datetime.date | None = None) -> list[dict]:
+    """Was laut den Lernplänen heute dran ist, nächste Prüfung zuerst."""
+    today = today or datetime.date.today()
+    tasks = []
+    for exam in exams:
+        left = days_left(exam, today)
+        if left < 0:
+            continue
+        if left == 0:
+            tasks.append({"exam_id": exam["id"], "title": exam["title"], "subject": exam["subject"],
+                          "days_left": 0, "task": "Heute ist die Prüfung. Viel Erfolg!", "goals": []})
+            continue
+        for entry in plan(exam, today):
+            if entry["date"] == today.isoformat():
+                tasks.append({"exam_id": exam["id"], "title": exam["title"], "subject": exam["subject"],
+                              "days_left": left, "task": entry["task"], "goals": entry["goals"]})
+    return sorted(tasks, key=lambda t: t["days_left"])
+
+
 def ics(exams: list[dict]) -> str:
     """Kalenderdatei, damit die Prüfungen auch im Handy-Kalender erscheinen."""
     def esc(s: str) -> str:

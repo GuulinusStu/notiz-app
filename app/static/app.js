@@ -110,11 +110,12 @@ function show(view) {
   if (view === "home") loadHome();
   if (view === "notes") renderDocs();
   if (view === "cards") loadCards();
-  if (view === "settings") loadSettings();
+  if (view === "settings") { loadSettings(); loadBackup(); }
   if (view === "calendar") loadCalendar();
   if (view === "subjects") renderSubjectAdmin();
   if (view !== "notes") setSelecting(false);
-  if (view === "record") fillSubjectSelect($("#rec-subject"), subject ?? "", true);
+  if (view === "record") { fillSubjectSelect($("#rec-subject"), subject ?? "", true); checkUnsavedRecording(); }
+  if (view === "learn") loadMistakes();
   if (view === "learn") $("#learn-scope").textContent = subject === null
     ? "Ich suche in allen Fächern. Wähle ein Fach, um gezielter zu fragen."
     : `Ich suche nur in ${subjectName(subject)}.`;
@@ -138,6 +139,20 @@ async function loadStatus() {
     banner.innerHTML = msg;
     renderTabs();
   } catch { /* Server startet gerade neu */ }
+  loadQuota();
+}
+
+async function loadQuota() {
+  try {
+    const q = await api("/api/quota");
+    const el = $("#quota");
+    el.hidden = false;
+    el.classList.toggle("low", q.remaining < 10);
+    el.textContent = q.remaining > 0
+      ? `KI heute: noch ${q.remaining} von ${q.limit} Anfragen`
+      : "KI-Limit für heute erreicht (ab 01:00 wieder frei)";
+    el.title = "Gratis-Modelle erlauben eine bestimmte Zahl Anfragen pro Tag. Karteikarten lernen, Suche und Lern-Timer brauchen keine.";
+  } catch { /* egal */ }
 }
 
 $("#banner").addEventListener("click", (e) => {
@@ -235,6 +250,7 @@ async function loadHome() {
   if (s.errors) facts.push(["Mit Fehler", plural(s.errors, "Notiz", "Notizen")]);
   $("#home-facts").innerHTML = facts.map(([k, v]) => `<li><span>${k}</span><strong>${esc(v)}</strong></li>`).join("");
   loadHomeExam();
+  loadToday();
   $("#home-recent").innerHTML = s.recent.length ? s.recent.map((d) => docItem(d, d.title.split(" / ").pop(), "recent")).join("")
     : `<li class="hint">Noch keine Notizen. Synchronisiere OneNote oder nimm eine Lektion auf.</li>`;
 }
@@ -264,7 +280,8 @@ function docItem(d, label, showSubject) {
     <span class="label">${pick}${KIND[d.kind] || ""} ${esc(label)}
       ${showSubject && d.subject && subject === null ? `<span class="tag">${esc(d.subject)}</span>` : ""}
       ${d.progress ? `<span class="progress">${esc(d.progress)}</span>`
-        : d.images_missing ? `<span class="progress">${plural(d.images_missing, "Bildseite wird", "Bildseiten werden")} später noch gelesen</span>` : ""}</span>
+        : d.images_missing ? `<span class="progress">${plural(d.images_missing, "Bildseite wird", "Bildseiten werden")} später noch gelesen</span>`
+        : d.blank_pages ? `<span class="progress">${plural(d.blank_pages, "leere Seite", "leere Seiten")}</span>` : ""}</span>
     <span class="row" style="gap:6px;flex-wrap:nowrap">
       ${d.created_at && showSubject ? `<span class="hint" style="margin:0">${dateText(d.created_at)}</span>` : ""}
       ${d.has_file && d.kind === "pdf" ? `<a class="file-link" href="/api/documents/${d.id}/file" target="_blank" title="PDF öffnen">PDF</a>` : ""}
@@ -342,7 +359,8 @@ async function openDoc(id, keepOutput = false) {
   $("#doc-title").title = doc.title;
   const meta = [KIND_NAME[doc.kind], doc.title.includes(" / ") ? doc.title.split(" / ").slice(0, -1).join(" › ") : "",
     `hinzugefügt ${dateText(doc.created_at)}`, doc.status !== "ready" ? STATUS[doc.status] : "", doc.progress,
-    doc.images_missing ? `${plural(doc.images_missing, "Bildseite", "Bildseiten")} mit Handschrift noch nicht gelesen (Tageslimit), wird automatisch nachgeholt` : ""];
+    doc.images_missing ? `${plural(doc.images_missing, "Bildseite", "Bildseiten")} mit Handschrift noch nicht gelesen (Tageslimit), wird automatisch nachgeholt` : "",
+    doc.blank_pages ? `${plural(doc.blank_pages, "leere Seite", "leere Seiten")} (falls dort etwas stehen sollte: in OneNote öffnen, warten bis alles geladen ist, dann neu synchronisieren)` : ""];
   $("#doc-meta").innerHTML = esc(meta.filter(Boolean).join(", ")) + (doc.error ? `<br><span class="error-text">${esc(doc.error)}</span>` : "");
   fillSubjectSelect($("#doc-subject"), doc.subject);
   const ready = doc.status === "ready";
@@ -428,7 +446,7 @@ $("#doc-quiz").addEventListener("click", (e) => busy(e.target, "Erstelle Quiz…
 
 // --- Quiz --------------------------------------------------------------------
 
-function renderQuiz(box, questions, quizSubject) {
+function renderQuiz(box, questions, quizSubject, onAnswer = null) {
   let score = 0, answered = 0;
   box.innerHTML = `<div class="row between" style="margin-top:14px"><h3>Quiz</h3><span class="score" aria-live="polite"></span></div>` +
     questions.map((q, i) => `
@@ -445,8 +463,14 @@ function renderQuiz(box, questions, quizSubject) {
       div.dataset.done = "1";
       answered++;
       const right = Number(btn.dataset.j) === q.richtig;
+      if (onAnswer) onAnswer(q, right);
       if (right) score++;
       else btn.classList.add("wrong");
+      if (!right && !onAnswer) {
+        // ins Fehlerheft
+        send("/api/mistakes", { subject: quizSubject || "", question: q.frage, options: q.optionen,
+          right: q.richtig, explanation: q.erklaerung || "" }).catch(() => {});
+      }
       div.querySelectorAll(".opts button")[q.richtig].classList.add("right");
       const expl = div.querySelector(".expl");
       expl.textContent = (right ? "Richtig. " : "Leider falsch. ") + (q.erklaerung || "");
@@ -454,6 +478,10 @@ function renderQuiz(box, questions, quizSubject) {
       const done = answered === questions.length;
       box.querySelector(".score").textContent = `${score} von ${answered} richtig${done && score === questions.length ? " 🎉" : ""}`;
       if (done) send("/api/quiz/result", { subject: quizSubject, score, total: questions.length }).catch(() => {});
+      if (done && onAnswer) {
+        box.insertAdjacentHTML("beforeend", `<button class="primary" style="margin-top:10px">Fertig</button>`);
+        box.lastElementChild.addEventListener("click", () => { loadMistakes(); loadHome(); });
+      }
     });
   });
   box.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -697,18 +725,49 @@ $("#note-save").addEventListener("click", (e) => busy(e.target, "Speichere…", 
 
 // --- Aufnahme ----------------------------------------------------------------
 
-let recorder = null, recChunks = [], recStart = 0, recTimer = null, wakeLock = null;
+let recorder = null, recChunks = [], recStart = 0, recTimer = null, wakeLock = null, recMarks = [];
+
+// Laufende Aufnahmen werden alle 10 s im Browser zwischengespeichert, damit bei einem Absturz
+// oder geschlossenen Fenster nichts verloren geht.
+const recStore = {
+  db: null,
+  async open() {
+    if (this.db) return this.db;
+    this.db = await new Promise((resolve, reject) => {
+      const req = indexedDB.open("notizapp-aufnahme", 1);
+      req.onupgradeneeded = () => req.result.createObjectStore("chunks", { autoIncrement: true });
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    return this.db;
+  },
+  async run(mode, fn) {
+    try {
+      const db = await this.open();
+      return await new Promise((resolve, reject) => {
+        const tx = db.transaction("chunks", mode);
+        const result = fn(tx.objectStore("chunks"));
+        tx.oncomplete = () => resolve(result?.result ?? result);
+        tx.onerror = () => reject(tx.error);
+      });
+    } catch { return null; } // ohne Zwischenspeicher geht die Aufnahme trotzdem
+  },
+  add(item) { return this.run("readwrite", (st) => st.add(item)); },
+  all() { return this.run("readonly", (st) => st.getAll()); },
+  clear() { return this.run("readwrite", (st) => st.clear()); },
+};
 
 function recordSubject() {
   const sel = $("#rec-subject").value;
   return sel === "__new__" ? $("#rec-subject-new").value.trim() : sel;
 }
 
-async function uploadAudio(blob, filename) {
+async function uploadAudio(blob, filename, extra = {}) {
   const form = new FormData();
   form.append("file", blob, filename);
-  form.append("title", $("#rec-title").value);
-  form.append("subject", recordSubject());
+  form.append("title", extra.title ?? $("#rec-title").value);
+  form.append("subject", extra.subject ?? recordSubject());
+  form.append("marks", (extra.marks ?? []).join(","));
   await api("/api/upload/audio", { method: "POST", body: form });
   $("#rec-title").value = "";
   refreshAll();
@@ -724,6 +783,14 @@ $("#audio-upload").addEventListener("click", (e) => busy(e.target, "Lade hoch…
 
 $("#rec-btn").addEventListener("click", () => (recorder ? stopRecording() : startRecording()));
 
+$("#rec-mark").addEventListener("click", () => {
+  if (!recorder) return;
+  recMarks.push(Math.round((Date.now() - recStart) / 1000));
+  $("#rec-marks").textContent = `(${recMarks.length})`;
+  recStore.add({ meta: true, marks: recMarks.slice() });
+  toast("Stelle als wichtig markiert.");
+});
+
 async function startRecording() {
   if ($("#rec-subject").value === "__new__" && !recordSubject()) { toast("Gib dem neuen Fach einen Namen.", true); return; }
   try {
@@ -731,7 +798,15 @@ async function startRecording() {
     const mime = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/webm"].find((m) => MediaRecorder.isTypeSupported(m));
     recorder = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 48000 } : undefined);
     recChunks = [];
-    recorder.ondataavailable = (e) => e.data.size && recChunks.push(e.data);
+    recMarks = [];
+    await recStore.clear();
+    await recStore.add({ meta: true, started: Date.now(), type: recorder.mimeType || "audio/webm",
+      title: $("#rec-title").value, subject: recordSubject(), marks: [] });
+    recorder.ondataavailable = (e) => {
+      if (!e.data.size) return;
+      recChunks.push(e.data);
+      recStore.add({ blob: e.data });
+    };
     recorder.start(10000); // alle 10 s ein Stück, damit bei einem Absturz weniger verloren geht
     recStart = Date.now();
     recTimer = setInterval(() => {
@@ -741,10 +816,20 @@ async function startRecording() {
     try { wakeLock = await navigator.wakeLock?.request("screen"); } catch { /* nicht unterstützt */ }
     $("#rec-btn").classList.add("on");
     $("#rec-btn").setAttribute("aria-label", "Aufnahme beenden und speichern");
-    $("#rec-state").textContent = "Aufnahme läuft. Tippe nochmals, um zu beenden und zu speichern.";
+    $("#rec-mark").hidden = false;
+    $("#rec-marks").textContent = "";
+    $("#rec-state").textContent = "Aufnahme läuft. Drück ⭐, wenn etwas Wichtiges kommt. Zum Beenden nochmals auf den roten Knopf.";
   } catch (e) {
+    recorder = null;
     toast("Das Mikrofon liess sich nicht starten: " + e.message, true);
   }
+}
+
+function saveBlobAsFile(blob, ext) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `aufnahme.${ext}`;
+  a.click();
 }
 
 function stopRecording() {
@@ -754,20 +839,19 @@ function stopRecording() {
     wakeLock?.release().catch(() => {});
     $("#rec-btn").classList.remove("on");
     $("#rec-btn").setAttribute("aria-label", "Aufnahme starten");
+    $("#rec-mark").hidden = true;
     $("#rec-state").textContent = "Speichere…";
     const type = recorder.mimeType || "audio/webm";
     const ext = type.includes("ogg") ? "ogg" : "webm";
     const blob = new Blob(recChunks, { type });
     try {
-      await uploadAudio(blob, `aufnahme-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")}.${ext}`);
+      await uploadAudio(blob, `aufnahme-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")}.${ext}`, { marks: recMarks });
+      await recStore.clear();
       $("#rec-state").textContent = "Gespeichert. Die App macht daraus jetzt Text, Zusammenfassung und Karteikarten.";
       toast("Lektion gespeichert.");
     } catch (e) {
-      // Aufnahme nicht verlieren: als Datei anbieten
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = `aufnahme.${ext}`;
-      a.click();
+      // Aufnahme nicht verlieren: bleibt im Zwischenspeicher und wird zusätzlich als Datei angeboten
+      saveBlobAsFile(blob, ext);
       $("#rec-state").textContent = "Hochladen hat nicht geklappt. Die Aufnahme wurde als Datei heruntergeladen.";
       toast(e.message, true);
     }
@@ -775,6 +859,35 @@ function stopRecording() {
     recorder = null;
   };
   recorder.stop();
+}
+
+async function checkUnsavedRecording() {
+  if (recorder) return;
+  const items = await recStore.all();
+  const chunks = (items || []).filter((i) => i.blob);
+  const box = $("#rec-recover");
+  if (!chunks.length) { box.hidden = true; return; }
+  const meta = Object.assign({}, ...(items || []).filter((i) => i.meta));
+  const minutes = Math.max(1, Math.round(chunks.length / 6));
+  box.hidden = false;
+  box.innerHTML = `Eine Aufnahme${meta.started ? ` vom ${new Date(meta.started).toLocaleString("de-CH", { dateStyle: "short", timeStyle: "short" })}` : ""}
+    (etwa ${minutes} Min.) wurde nicht fertig gespeichert.
+    <div class="row" style="margin-top:8px"><button id="rec-restore" class="primary">Wiederherstellen und verarbeiten</button>
+    <button id="rec-discard">Verwerfen</button></div>`;
+  $("#rec-restore").onclick = (e) => busy(e.target, "Lade hoch…", async () => {
+    const type = meta.type || "audio/webm";
+    const blob = new Blob(chunks.map((c) => c.blob), { type });
+    await uploadAudio(blob, `aufnahme-wiederhergestellt.${type.includes("ogg") ? "ogg" : "webm"}`,
+      { title: meta.title || "Wiederhergestellte Aufnahme", subject: meta.subject ?? "", marks: meta.marks || [] });
+    await recStore.clear();
+    box.hidden = true;
+    toast("Aufnahme wiederhergestellt. Sie wird jetzt verarbeitet.");
+  });
+  $("#rec-discard").onclick = async () => {
+    if (!confirm("Die nicht gespeicherte Aufnahme endgültig verwerfen?")) return;
+    await recStore.clear();
+    box.hidden = true;
+  };
 }
 
 window.addEventListener("beforeunload", (e) => { if (recorder) { e.preventDefault(); e.returnValue = ""; } });
@@ -838,6 +951,181 @@ $("#reprocess-pdfs").addEventListener("click", (e) => {
   if (confirm("Alle PDFs neu einlesen? Das dauert eine Weile und braucht KI-Anfragen.")) reprocess(e.target, false);
 });
 $("#reprocess-errors").addEventListener("click", (e) => reprocess(e.target, true));
+
+// --- Heute lernen --------------------------------------------------------------
+
+async function loadToday() {
+  let t;
+  try { t = await api("/api/today" + subjectQuery()); } catch { return; }
+  const items = t.tasks.map((task) => `<li style="--tab:${tabColor(task.subject)}">
+      <span class="what">${esc(task.task)}${task.goals.length ? `: ${task.goals.map(esc).join("; ")}` : ""}
+        <small>${esc(task.subject ? task.subject + ", " : "")}Prüfung „${esc(task.title)}“ ${daysText(task.days_left)}</small></span>
+      <button data-exam="${task.exam_id}">Öffnen</button></li>`);
+  if (t.cards_due) items.push(`<li><span class="what">${plural(t.cards_due, "Karteikarte ist", "Karteikarten sind")} fällig</span>
+      <button data-go="cards" class="primary">Lernen</button></li>`);
+  if (t.mistakes_open) items.push(`<li><span class="what">${plural(t.mistakes_open, "Frage", "Fragen")} im Fehlerheft</span>
+      <button data-go="mistakes">Üben</button></li>`);
+  $("#home-today").hidden = !items.length;
+  $("#today-list").innerHTML = items.join("");
+}
+
+$("#today-list").addEventListener("click", (e) => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  if (b.dataset.exam) { show("calendar"); openExam(Number(b.dataset.exam)); }
+  else if (b.dataset.go === "cards") show("cards");
+  else if (b.dataset.go === "mistakes") { show("learn"); $("#mistakes-box").scrollIntoView({ behavior: "smooth" }); }
+});
+
+// --- Fehlerheft ---------------------------------------------------------------
+
+let mistakes = [];
+
+async function loadMistakes() {
+  try { mistakes = await api("/api/mistakes" + subjectQuery()); } catch { return; }
+  $("#mistakes-practice").disabled = !mistakes.length;
+  $("#mistakes-box").innerHTML = mistakes.length ? mistakes.map((m) => `<div class="mistake" data-id="${m.id}">
+      <div class="q">${esc(m.question)}</div>
+      <div class="a">Richtig: ${esc(m.options[m.right])}</div>
+      ${m.explanation ? `<div class="hint">${esc(m.explanation)}</div>` : ""}
+      <div class="row"><button class="link" data-card>Als Karteikarte</button><button class="link" data-done>Kann ich jetzt</button></div>
+    </div>`).join("") : `<p class="hint">Noch keine Fehler gesammelt. 👍</p>`;
+}
+
+$("#mistakes-box").addEventListener("click", async (e) => {
+  const box = e.target.closest(".mistake[data-id]");
+  if (!box) return;
+  try {
+    if (e.target.closest("[data-card]")) {
+      await send(`/api/mistakes/${box.dataset.id}/card`);
+      toast("Als Karteikarte gespeichert.");
+      loadStatus();
+    } else if (e.target.closest("[data-done]")) {
+      await send(`/api/mistakes/${box.dataset.id}/resolve`);
+    } else return;
+    loadMistakes();
+  } catch (err) { toast(err.message, true); }
+});
+
+$("#mistakes-practice").addEventListener("click", () => {
+  // Die gesammelten Fragen nochmals als Quiz, ohne KI. Richtig beantwortete verschwinden aus dem Heft.
+  const list = [...mistakes].sort(() => Math.random() - 0.5).slice(0, 10);
+  const questions = list.map((m) => ({ frage: m.question, optionen: m.options, richtig: m.right, erklaerung: m.explanation, id: m.id }));
+  renderQuiz($("#mistakes-box"), questions, subject ?? "", (q, right) => {
+    if (right) send(`/api/mistakes/${q.id}/resolve`).catch(() => {});
+  });
+});
+
+// --- Erklär-Modus -------------------------------------------------------------
+
+async function checkExplanation(goal, text, subj, out, button) {
+  if (!goal.trim() || text.trim().length < 10) { toast("Schreib zuerst ein Thema und deine Erklärung.", true); return; }
+  await busy(button, "Prüfe…", async () => {
+    const { feedback, sources } = await send("/api/explain", { goal, explanation: text, subject: subj });
+    const seen = new Set();
+    const unique = sources.filter((x) => !seen.has(x.doc_id) && seen.add(x.doc_id));
+    out.innerHTML = `<div class="msg bot explain-box"><div class="md">${md(feedback)}</div>
+      <div class="sources">Verglichen mit: ${unique.map((x) => `<button data-id="${x.doc_id}">${esc(x.title.split(" / ").pop())}</button>`).join("")}</div></div>`;
+    loadQuota();
+  });
+}
+
+$("#explain-send").addEventListener("click", (e) =>
+  checkExplanation($("#explain-goal").value, $("#explain-text").value, subject, $("#explain-result"), e.target));
+$("#explain-result").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-id]");
+  if (b) openDoc(Number(b.dataset.id));
+});
+
+// --- Lern-Timer -----------------------------------------------------------------
+
+let timer = null; // { end, minutes, phase: "focus" | "pause", subject }
+
+function openTimer() {
+  if (timer) { if (confirm("Timer abbrechen?")) stopTimer(); return; }
+  $("#timer-dialog").showModal();
+}
+
+function startTimer(minutes, phase = "focus") {
+  timer = { end: Date.now() + minutes * 60000, minutes, phase, subject: subject ?? "" };
+  if (phase === "focus" && "Notification" in window && Notification.permission === "default") Notification.requestPermission();
+  tickTimer();
+}
+
+function stopTimer() {
+  timer = null;
+  $("#timer-pill").hidden = true;
+  document.title = subject === null ? "Notiz-App" : `${subjectName(subject)} – Notiz-App`;
+}
+
+function beep() {
+  try {
+    const ctx = new AudioContext();
+    [0, 0.35, 0.7].forEach((t) => {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.frequency.value = 880;
+      g.gain.setValueAtTime(0.2, ctx.currentTime + t);
+      g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + 0.3);
+      o.connect(g).connect(ctx.destination);
+      o.start(ctx.currentTime + t);
+      o.stop(ctx.currentTime + t + 0.3);
+    });
+  } catch { /* kein Ton möglich */ }
+}
+
+function notify(text) {
+  beep();
+  toast(text);
+  try { if (Notification.permission === "granted") new Notification("Notiz-App", { body: text }); } catch { /* egal */ }
+}
+
+function tickTimer() {
+  if (!timer) return;
+  const left = Math.max(0, Math.round((timer.end - Date.now()) / 1000));
+  const text = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`;
+  const pill = $("#timer-pill");
+  pill.hidden = false;
+  pill.classList.toggle("pause", timer.phase === "pause");
+  pill.textContent = (timer.phase === "focus" ? "⏱️ Lernen " : "☕ Pause ") + text;
+  pill.title = "Klicken zum Abbrechen";
+  document.title = `${text} ${timer.phase === "focus" ? "Lernen" : "Pause"} – Notiz-App`;
+  if (left > 0) { setTimeout(tickTimer, 1000); return; }
+  if (timer.phase === "focus") {
+    send("/api/focus", { subject: timer.subject, minutes: timer.minutes }).then(() => { if (currentView === "home") loadHome(); }).catch(() => {});
+    notify(`Super, ${timer.minutes} Minuten gelernt! Jetzt ${timer.minutes >= 45 ? 10 : 5} Minuten Pause.`);
+    startTimer(timer.minutes >= 45 ? 10 : 5, "pause");
+  } else {
+    notify("Pause vorbei. Weiter geht's, wenn du bereit bist.");
+    stopTimer();
+  }
+}
+
+$("#open-timer").addEventListener("click", openTimer);
+$("#timer-pill").addEventListener("click", openTimer);
+$("#timer-close").addEventListener("click", () => $("#timer-dialog").close());
+$("#timer-dialog").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-min]");
+  if (!b) return;
+  $("#timer-dialog").close();
+  startTimer(Number(b.dataset.min));
+});
+
+// --- Sicherung ------------------------------------------------------------------
+
+async function loadBackup() {
+  try {
+    const b = await api("/api/backup");
+    $("#backup-info").textContent = b.last
+      ? `Letzte Sicherung: ${new Date(b.last * 1000).toLocaleString("de-CH", { dateStyle: "medium", timeStyle: "short" })}, im Ordner ${b.folder}. Die letzten 7 Tage werden aufbewahrt.`
+      : `Deine Notizen, Karten und Prüfungen werden jeden Tag in ${b.folder} gesichert.`;
+  } catch { /* egal */ }
+}
+
+$("#backup-now").addEventListener("click", (e) => busy(e.target, "Sichere…", async () => {
+  await send("/api/backup");
+  toast("Gesichert.");
+  loadBackup();
+}));
 
 // --- Notizen umbenennen und verschieben ---------------------------------------
 
@@ -1131,6 +1419,11 @@ async function openExam(id) {
   const open = ex.goals.filter((g) => !g.done).length;
   const goalsHtml = ex.goals.length ? ex.goals.map((g, i) => `<div class="goal ${g.done ? "done" : ""}">
       <label><input type="checkbox" data-goal="${i}" ${g.done ? "checked" : ""}> ${esc(g.text)}</label>
+      <div class="found"><button class="link" data-explain="${i}">✍️ In eigenen Worten erklären</button></div>
+      <div class="explain-area" data-area="${i}" hidden style="margin-left:28px">
+        <textarea rows="4" placeholder="Erkläre das Lernziel so, als würdest du es jemandem beibringen…"></textarea>
+        <button class="primary" data-check="${i}">Erklärung prüfen</button><div class="explain-out"></div>
+      </div>
       ${g.docs.length ? `<div class="found">${g.docs.map((d) => `<button data-doc="${d.doc_id}" title="${esc(d.snippet)}">${esc(d.title.split(" / ").pop())}</button>`).join("")}</div>`
         : g.done ? "" : `<p class="missing">Dazu habe ich nichts in deinen Notizen gefunden. Schau im Heft nach oder nimm die Lektion dazu auf.</p>`}
     </div>`).join("")
@@ -1159,7 +1452,18 @@ async function openExam(id) {
 $("#exam-detail").addEventListener("click", async (e) => {
   const ex = currentExam;
   if (!ex) return;
-  if (e.target.closest("[data-edit]")) editExam(ex);
+  const explainBtn = e.target.closest("[data-explain]");
+  const checkBtn = e.target.closest("[data-check]");
+  if (explainBtn) {
+    const area = $(`#exam-detail [data-area="${explainBtn.dataset.explain}"]`);
+    area.hidden = !area.hidden;
+    if (!area.hidden) area.querySelector("textarea").focus();
+  } else if (checkBtn) {
+    const area = checkBtn.closest(".explain-area");
+    checkExplanation(ex.goals[Number(checkBtn.dataset.check)].text, area.querySelector("textarea").value,
+      ex.subject || null, area.querySelector(".explain-out"), checkBtn);
+  } else if (e.target.closest(".explain-out button[data-id]")) openDoc(Number(e.target.closest("button[data-id]").dataset.id));
+  else if (e.target.closest("[data-edit]")) editExam(ex);
   else if (e.target.closest("[data-doc]")) openDoc(Number(e.target.closest("[data-doc]").dataset.doc));
   else if (e.target.closest("[data-quiz]")) busy(e.target.closest("button"), "Erstelle Quiz…", async () => {
     const { fragen } = await send(`/api/exams/${ex.id}/quiz?n=${Math.min(12, Math.max(5, ex.goals.length * 2))}`);

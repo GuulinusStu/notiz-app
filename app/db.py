@@ -64,6 +64,22 @@ CREATE TABLE IF NOT EXISTS exams (          -- Prüfungen im Kalender
   goals TEXT NOT NULL DEFAULT '[]',         -- JSON: [{"text": ..., "done": false}]
   created_at REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS mistakes (       -- Fehlerheft: falsch beantwortete Quizfragen
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  subject TEXT NOT NULL DEFAULT '',
+  question TEXT NOT NULL,
+  options TEXT NOT NULL,                    -- JSON-Liste
+  right INTEGER NOT NULL,
+  explanation TEXT NOT NULL DEFAULT '',
+  ts REAL NOT NULL,
+  resolved INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS focus_sessions ( -- Lern-Timer
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  subject TEXT NOT NULL DEFAULT '',
+  minutes INTEGER NOT NULL,
+  ts REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS page_cache (     -- schon von der KI abgeschriebene Bildseiten
   key TEXT PRIMARY KEY,
   text TEXT NOT NULL
@@ -81,12 +97,14 @@ CREATE TABLE IF NOT EXISTS flashcards (
 """
 
 DOC_FIELDS = {"title", "subject", "status", "progress", "source_path",
-              "raw_text", "clean_text", "summary", "error", "external_modified", "images_missing", "title_custom"}
+              "raw_text", "clean_text", "summary", "error", "external_modified", "images_missing", "title_custom", "blank_pages", "marks"}
 
 # Spalten, die nach der ersten Version dazugekommen sind
 MIGRATIONS = {"external_id": "TEXT", "external_modified": "TEXT",
               "images_missing": "INTEGER NOT NULL DEFAULT 0",
-              "title_custom": "INTEGER NOT NULL DEFAULT 0"}  # 1 = selbst umbenannt, OneNote überschreibt den Titel nicht
+              "title_custom": "INTEGER NOT NULL DEFAULT 0",
+              "blank_pages": "INTEGER NOT NULL DEFAULT 0",   # PDF-Seiten ohne jeden Inhalt
+              "marks": "TEXT NOT NULL DEFAULT ''"}            # „Wichtig“-Stellen einer Aufnahme (Sekunden)  # 1 = selbst umbenannt, OneNote überschreibt den Titel nicht
 
 
 def connect() -> sqlite3.Connection:
@@ -150,7 +168,7 @@ def get_document(doc_id: int) -> dict | None:
 def list_documents() -> list[dict]:
     with session() as c:
         rows = c.execute(
-            "SELECT id, title, kind, subject, status, progress, error, created_at, external_id, images_missing,"
+            "SELECT id, title, kind, subject, status, progress, error, created_at, external_id, images_missing, blank_pages,"
             " source_path IS NOT NULL AS has_file,"
             " length(summary) > 0 AS has_summary FROM documents ORDER BY created_at DESC"
         ).fetchall()
@@ -438,6 +456,12 @@ def stats(subject: str | None = None) -> dict:
         docs = c.execute(f"SELECT kind, status, count(*) AS n FROM documents{where} GROUP BY kind, status", args).fetchall()
         learn_ts = [r[0] for r in c.execute(f"SELECT ts FROM reviews{where}", args)]
         learn_ts += [r[0] for r in c.execute(f"SELECT ts FROM quiz_results{where}", args)]
+        learn_ts += [r[0] for r in c.execute(f"SELECT ts FROM focus_sessions{where}", args)]
+        focus_today = c.execute(
+            f"SELECT coalesce(sum(minutes), 0) FROM focus_sessions{where}{' AND' if where else ' WHERE'} ts >= ?",
+            (*args, today_start)).fetchone()[0]
+        mistakes_open = c.execute(
+            f"SELECT count(*) FROM mistakes{where}{' AND' if where else ' WHERE'} resolved = 0", args).fetchone()[0]
         reviews_today = c.execute(
             f"SELECT count(*) FROM reviews{where}{' AND' if where else ' WHERE'} ts >= ?", (*args, today_start)).fetchone()[0]
         quiz = c.execute(f"SELECT sum(score), sum(total) FROM quiz_results{where}", args).fetchone()
@@ -457,6 +481,8 @@ def stats(subject: str | None = None) -> dict:
         "cards_total": cards_total,
         "cards_due": len(due),
         "reviews_today": reviews_today,
+        "focus_today": focus_today,
+        "mistakes_open": mistakes_open,
         "streak": streak_days(learn_ts),
         "quiz_percent": round(100 * quiz[0] / quiz[1]) if quiz[1] else None,
         "recent": [dict(r) for r in recent],
@@ -507,3 +533,66 @@ def list_exams(subject: str | None = None) -> list[dict]:
 def delete_exam(exam_id: int) -> None:
     with session() as c:
         c.execute("DELETE FROM exams WHERE id = ?", (exam_id,))
+
+
+# --- Fehlerheft und Lern-Timer -------------------------------------------------
+
+def add_mistake(subject: str, question: str, options: list[str], right: int, explanation: str) -> int:
+    import json
+    with session() as c:
+        # dieselbe Frage nicht doppelt sammeln
+        row = c.execute("SELECT id FROM mistakes WHERE question = ? AND resolved = 0", (question,)).fetchone()
+        if row:
+            return row["id"]
+        return c.execute(
+            "INSERT INTO mistakes (subject, question, options, right, explanation, ts) VALUES (?, ?, ?, ?, ?, ?)",
+            (subject or "", question, json.dumps(options, ensure_ascii=False), right, explanation, time.time())).lastrowid
+
+
+def list_mistakes(subject: str | None = None) -> list[dict]:
+    import json
+    with session() as c:
+        if subject is None:
+            rows = c.execute("SELECT * FROM mistakes WHERE resolved = 0 ORDER BY ts DESC").fetchall()
+        else:
+            rows = c.execute("SELECT * FROM mistakes WHERE resolved = 0 AND subject = ? ORDER BY ts DESC",
+                             (subject,)).fetchall()
+    return [{**dict(r), "options": json.loads(r["options"])} for r in rows]
+
+
+def get_mistake(mistake_id: int) -> dict | None:
+    import json
+    with session() as c:
+        r = c.execute("SELECT * FROM mistakes WHERE id = ?", (mistake_id,)).fetchone()
+    return {**dict(r), "options": json.loads(r["options"])} if r else None
+
+
+def resolve_mistake(mistake_id: int) -> None:
+    with session() as c:
+        c.execute("UPDATE mistakes SET resolved = 1 WHERE id = ?", (mistake_id,))
+
+
+def log_focus(subject: str, minutes: int) -> None:
+    with session() as c:
+        c.execute("INSERT INTO focus_sessions (subject, minutes, ts) VALUES (?, ?, ?)", (subject or "", minutes, time.time()))
+
+
+def backup(target_dir, keep: int = 7):
+    """Sichert die Datenbank (auch während die App läuft) und behält die letzten `keep` Kopien."""
+    import datetime
+    from pathlib import Path
+    target_dir = Path(target_dir)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / f"notizapp-{datetime.date.today().isoformat()}.db"
+    src = connect()
+    try:
+        dst = sqlite3.connect(target)
+        try:
+            src.backup(dst)
+        finally:
+            dst.close()
+    finally:
+        src.close()
+    for old in sorted(target_dir.glob("notizapp-*.db"))[:-keep]:
+        old.unlink(missing_ok=True)
+    return target

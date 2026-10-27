@@ -28,3 +28,5 @@ AUTO_RETRY = os.environ.get("NOTIZAPP_AUTO_RETRY", "1") == "1"
 # Gratis-Modelle erlauben etwa 50 Anfragen pro Tag. Das Abschreiben von Handschrift im Hintergrund
 # darf davon nur einen Teil brauchen, damit Fragen, Quiz und Karteikarten immer funktionieren.
 IMAGE_DAILY_BUDGET = int(os.environ.get("NOTIZAPP_IMAGE_DAILY_BUDGET", "25"))
+# Datenbank täglich sichern (in OneDrive, falls vorhanden)
+AUTO_BACKUP = os.environ.get("NOTIZAPP_AUTO_BACKUP", "1") == "1"

@@ -1,5 +1,6 @@
 """Web-Server der Notiz-App. Läuft nur lokal auf dem eigenen Laptop."""
 import shutil
+import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -22,7 +23,38 @@ async def lifespan(_app: FastAPI):
     worker.start()
     if onenote.available() and config.ONENOTE_AUTO_SYNC:
         onenote.start_sync()
+    if config.AUTO_BACKUP:
+        start_backups()
     yield
+
+
+def backup_dir() -> Path:
+    """Sicherungen in OneDrive, falls vorhanden; so gibt es eine Kopie ausserhalb des Laptops."""
+    import os
+    onedrive = os.environ.get("OneDrive") or os.environ.get("OneDriveConsumer")
+    if onedrive and Path(onedrive).is_dir():
+        return Path(onedrive) / "Notiz-App-Sicherung"
+    return config.DATA_DIR / "sicherung"
+
+
+def run_backup() -> str:
+    target = db.backup(backup_dir())
+    db.set_setting("last_backup", f"{time.time():.0f}|{target}")
+    return str(target)
+
+
+def start_backups() -> None:
+    import threading
+
+    def loop():
+        while True:
+            try:
+                run_backup()
+            except Exception as e:
+                print(f"Sicherung fehlgeschlagen: {e}")
+            time.sleep(24 * 3600)
+
+    threading.Thread(target=loop, name="notizapp-backup", daemon=True).start()
 
 
 app = FastAPI(title="Notiz-App", lifespan=lifespan)
@@ -233,10 +265,12 @@ def upload_pdf(files: list[UploadFile] = File(...), subject: str = Form("")):
 
 
 @app.post("/api/upload/audio")
-def upload_audio(file: UploadFile = File(...), title: str = Form(""), subject: str = Form("")):
+def upload_audio(file: UploadFile = File(...), title: str = Form(""), subject: str = Form(""), marks: str = Form("")):
     path = save_upload(file, AUDIO_TYPES)
     title = title.strip() or Path(file.filename).stem
     doc_id = db.create_document(title, "lesson", subject.strip(), str(path))
+    if marks.strip():
+        db.update_document(doc_id, marks=",".join(m for m in marks.split(",") if m.strip())[:2000])
     worker.enqueue(doc_id)
     return {"id": doc_id}
 
@@ -313,6 +347,104 @@ def quiz_result(r: QuizResult):
 
 class SubjectIn(BaseModel):
     subject: str
+
+
+# --- Heute, Fehlerheft, Lern-Timer, Erklären --------------------------------------
+
+@app.get("/api/quota")
+def quota():
+    return llm.quota()
+
+
+@app.get("/api/today")
+def today(subject: str | None = None):
+    due = db.due_flashcards(limit=10000, subject=subject)
+    return {"tasks": exams.today_tasks(db.list_exams(subject)), "cards_due": len(due),
+            "mistakes_open": len(db.list_mistakes(subject))}
+
+
+class MistakeIn(BaseModel):
+    subject: str = ""
+    question: str = Field(min_length=1)
+    options: list[str] = Field(min_length=2)
+    right: int
+    explanation: str = ""
+
+
+@app.post("/api/mistakes")
+def add_mistake(m: MistakeIn):
+    if not 0 <= m.right < len(m.options):
+        raise HTTPException(400, "Ungültige Antwort.")
+    return {"id": db.add_mistake(m.subject, m.question, m.options, m.right, m.explanation)}
+
+
+@app.get("/api/mistakes")
+def list_mistakes(subject: str | None = None):
+    return db.list_mistakes(subject)
+
+
+def require_mistake(mistake_id: int) -> dict:
+    m = db.get_mistake(mistake_id)
+    if not m:
+        raise HTTPException(404, "Frage nicht gefunden.")
+    return m
+
+
+@app.post("/api/mistakes/{mistake_id}/resolve")
+def resolve_mistake(mistake_id: int):
+    require_mistake(mistake_id)
+    db.resolve_mistake(mistake_id)
+    return {"ok": True}
+
+
+@app.post("/api/mistakes/{mistake_id}/card")
+def mistake_to_card(mistake_id: int):
+    """Aus einer falsch beantworteten Frage eine Karteikarte machen (ohne KI)."""
+    m = require_mistake(mistake_id)
+    back = m["options"][m["right"]] + (f"\n\n{m['explanation']}" if m["explanation"] else "")
+    # Karte der passendsten Notiz im Fach zuordnen, damit sie beim Fach erscheint (lokale Suche, keine KI)
+    try:
+        hits = study.search(m["question"], k=1, subject=m["subject"] or None)
+    except llm.LLMError:
+        hits = []
+    doc_id = hits[0]["doc_id"] if hits else None
+    db.add_flashcards(doc_id, [(m["question"], back)])
+    db.resolve_mistake(mistake_id)
+    return {"ok": True}
+
+
+class FocusIn(BaseModel):
+    subject: str = ""
+    minutes: int = Field(ge=1, le=180)
+
+
+@app.post("/api/focus")
+def log_focus(f: FocusIn):
+    db.log_focus(f.subject, f.minutes)
+    return {"ok": True}
+
+
+class ExplainIn(BaseModel):
+    goal: str = Field(min_length=3, max_length=500)
+    explanation: str = Field(min_length=10, max_length=5000)
+    subject: str | None = None
+
+
+@app.post("/api/explain")
+def explain(e: ExplainIn):
+    return study.check_explanation(e.goal, e.explanation, e.subject)
+
+
+@app.get("/api/backup")
+def backup_info():
+    ts, _, path = db.get_setting("last_backup", "").partition("|")
+    return {"last": float(ts) if ts else None, "path": path, "folder": str(backup_dir())}
+
+
+@app.post("/api/backup")
+def backup_now():
+    path = run_backup()
+    return {"path": path}
 
 
 # --- Prüfungen ---------------------------------------------------------------

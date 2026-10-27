@@ -16,6 +16,7 @@
     <div class="brand">Notiz<span>-App</span></div>
     <ul id="tabs" class="tabs"></ul>
     <div class="rail-foot">
+      <button id="open-timer" title="Lern-Timer: 25 Minuten konzentriert lernen, dann Pause">⏱️ Lern-Timer</button>
       <button id="open-subjects" title="Fächer umbenennen, ordnen, anlegen">✏️ Fächer</button>
       <button id="open-settings" title="Einstellungen">⚙️ Einstellungen</button>
     </div>
@@ -31,6 +32,7 @@
         <div class="search">
           <input id="search" type="search" placeholder="In allen Notizen suchen" autocomplete="off" aria-label="Suchen">
           <div id="search-results" class="search-results" hidden></div>
+          <p id="quota" class="quota" hidden></p>
         </div>
       </div>
 
@@ -48,6 +50,10 @@
       <!-- Übersicht -->
       <section id="view-home" class="view">
         <button id="home-exam" class="exam-strip" hidden></button>
+        <div id="home-today" class="panel" hidden>
+          <h2>Heute lernen</h2>
+          <ul id="today-list" class="today-list"></ul>
+        </div>
         <div class="today">
           <div class="panel">
             <p id="home-lead" class="lead"></p>
@@ -164,6 +170,22 @@
           </div>
           <div id="quiz-box"><p class="hint">Die Fragen kommen aus zufälligen Stellen deiner Notizen im gewählten Fach.</p></div>
         </div>
+        <div class="panel">
+          <div class="row between">
+            <h2>Fehlerheft</h2>
+            <button id="mistakes-practice" class="primary">Nochmals üben</button>
+          </div>
+          <p class="hint">Hier landen Quizfragen, die du falsch beantwortet hast. Beantwortest du sie richtig, verschwinden sie.</p>
+          <div id="mistakes-box"></div>
+        </div>
+        <div class="panel flat">
+          <h2>Erklär es in eigenen Worten</h2>
+          <p class="hint">Die beste Lernmethode: Erkläre ein Thema so, als würdest du es jemandem beibringen. Die KI vergleicht es mit deinen Notizen.</p>
+          <input id="explain-goal" placeholder="Thema, z. B. Wie funktioniert das Zweierkomplement?">
+          <textarea id="explain-text" rows="5" placeholder="Deine Erklärung…"></textarea>
+          <button id="explain-send" class="primary">Erklärung prüfen</button>
+          <div id="explain-result"></div>
+        </div>
       </section>
 
       <!-- Karteikarten -->
@@ -265,9 +287,11 @@
               <input id="rec-title" placeholder="z. B. Brüche addieren">
             </div>
           </div>
+          <div id="rec-recover" class="banner" hidden></div>
           <div class="recorder">
             <button id="rec-btn" class="rec-btn" aria-label="Aufnahme starten"></button>
             <span id="rec-time" class="rec-time">0:00</span>
+            <button id="rec-mark" class="mark-btn" hidden title="Markiert diese Stelle; sie kommt extra in die Zusammenfassung">⭐ Wichtig <span id="rec-marks"></span></button>
             <span id="rec-state" class="hint">Tippe auf den roten Knopf, um die Aufnahme zu starten.</span>
           </div>
           <p class="hint">Lass das Fenster offen und den Laptop aufgeklappt. Frag vorher deine Lehrperson, ob du aufnehmen darfst.
@@ -281,6 +305,11 @@
 
       <!-- Einstellungen -->
       <section id="view-settings" class="view" hidden>
+        <div class="panel flat">
+          <h2>Sicherung</h2>
+          <p id="backup-info" class="hint">Deine Notizen, Karten und Prüfungen werden jeden Tag gesichert.</p>
+          <button id="backup-now">Jetzt sichern</button>
+        </div>
         <div class="panel">
           <h2>KI über OpenRouter</h2>
           <p class="hint">Die KI rechnet im Internet, damit dein Laptop frei bleibt. Dafür werden die Notiz-Stellen, zu denen du etwas fragst, an OpenRouter geschickt.</p>
@@ -311,6 +340,17 @@
   </main>
 </div>
 <div id="toasts" class="toasts" aria-live="polite"></div>
+<dialog id="timer-dialog" class="timer-dialog">
+  <h2>Lern-Timer</h2>
+  <p class="hint">Lerne konzentriert ohne Handy, dann mach eine kurze Pause. Gelernte Minuten zählen für deine Lernserie.</p>
+  <div class="row">
+    <button data-min="25" class="primary">25 Minuten lernen</button>
+    <button data-min="45">45 Minuten</button>
+    <button data-min="15">15 Minuten</button>
+  </div>
+  <div class="row" style="margin-top:14px"><button id="timer-close" class="link">Schliessen</button></div>
+</dialog>
+<button id="timer-pill" class="timer-pill" hidden></button>
 <script src="app.js"></script>
 </body>
 </html>

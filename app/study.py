@@ -23,6 +23,18 @@ Antworte nur mit JSON in genau diesem Format:
 "quelle" ist die Nummer des Auszugs [n], aus dem die Karte stammt (nur falls der Text nummeriert ist).
 Verwende nur Inhalte aus dem Text."""
 
+EXPLAIN_PROMPT = """Du bist ein freundlicher, ehrlicher Lehrer. Eine Schülerin oder ein Schüler erklärt ein Lernziel
+in eigenen Worten. Vergleiche die Erklärung mit den Auszügen aus den Unterrichtsnotizen.
+Antworte auf Deutsch in Markdown, kurz und ermutigend, mit genau diesen Abschnitten:
+## Bewertung
+Eine Zeile: „Sitzt“, „Fast“ oder „Noch nicht“, mit einem Satz Begründung.
+## Richtig
+Was stimmt (Stichpunkte).
+## Fehlt oder ist falsch
+Was fehlt oder falsch ist, mit der richtigen Aussage aus den Notizen (Stichpunkte, Quelle als [n]).
+## Tipp
+Ein konkreter nächster Schritt zum Üben."""
+
 MAX_STUDY_WORDS = 5000
 
 
@@ -153,3 +165,13 @@ def find(query: str, subject: str | None = None, limit: int = 12) -> list[dict]:
         results.append({"doc_id": hit["doc_id"], "title": hit["title"], "subject": doc.get("subject", ""),
                         "snippet": hit["text"][:240], "kind": doc.get("kind", "")})
     return results[:limit]
+
+
+def check_explanation(goal: str, explanation: str, subject: str | None = None) -> dict:
+    """Feynman-Methode: Die eigene Erklärung wird mit den Notizen verglichen."""
+    hits = [h for h in search(goal + " " + explanation, k=6, subject=subject) if h["score"] >= 0.2]
+    if not hits:
+        raise llm.LLMError("Zu diesem Lernziel habe ich in deinen Notizen nichts gefunden, womit ich vergleichen kann.")
+    context = "\n\n".join(f"[{i}] ({h['title']})\n{h['text']}" for i, h in enumerate(hits, start=1))
+    feedback = llm.ask(EXPLAIN_PROMPT, f"Lernziel: {goal}\n\nErklärung:\n{explanation}\n\nAuszüge:\n{context}")
+    return {"feedback": feedback, "sources": [{"n": i, **h} for i, h in enumerate(hits, start=1)]}

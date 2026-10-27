@@ -73,6 +73,7 @@ MIN_PAGE_WORDS = 25  # weniger Text auf einer Seite = vermutlich Bild, Scan oder
 class PdfText(str):
     """Text eines PDFs; images_missing zählt Bildseiten, die die KI (noch) nicht lesen konnte."""
     images_missing = 0
+    blank_pages = 0  # Seiten ganz ohne Inhalt, z. B. in OneNote nicht heruntergeladen
 
 
 def extract_pdf_text(path: Path, progress: ProgressFn = lambda _: None, read_images: bool = False) -> PdfText:
@@ -85,11 +86,14 @@ def extract_pdf_text(path: Path, progress: ProgressFn = lambda _: None, read_ima
 
     import pymupdf
 
-    pages, missing, limit_hit = [], 0, False
+    pages, missing, blank, limit_hit = [], 0, 0, False
     model = llm.vision_model() if read_images else ""
     with pymupdf.open(path) as pdf:
         for i, page in enumerate(pdf, start=1):
             text = page.get_text().strip()
+            if not text and not _has_visual_content(page):
+                blank += 1
+                continue
             if read_images and len(text.split()) < MIN_PAGE_WORDS and _has_visual_content(page):
                 png = page.get_pixmap(dpi=130).tobytes("png")
                 key = hashlib.sha1(png).hexdigest() + ":" + model
@@ -109,6 +113,7 @@ def extract_pdf_text(path: Path, progress: ProgressFn = lambda _: None, read_ima
                 pages.append(f"--- Seite {i} ---\n{text}")
     result = PdfText("\n\n".join(pages))
     result.images_missing = missing
+    result.blank_pages = blank
     return result
 
 
@@ -205,6 +210,27 @@ def load_audio(path: Path) -> np.ndarray:
     return np.concatenate(parts).astype(np.float32) / 32768.0
 
 
+def marked_passages(raw: str, marks: str, before: int = 30, after: int = 10) -> list[str]:
+    """Was rund um die „Wichtig“-Markierungen gesagt wurde (aus dem Transkript mit Zeitangaben)."""
+    times = sorted({int(float(m)) for m in (marks or "").split(",") if m.strip().replace(".", "", 1).isdigit()})
+    lines = []
+    for line in raw.splitlines():
+        if line.startswith("[") and "]" in line:
+            stamp = line[1:line.index("]")]
+            try:
+                parts = [int(p) for p in stamp.split(":")]
+            except ValueError:
+                continue
+            seconds = sum(p * 60 ** i for i, p in enumerate(reversed(parts)))
+            lines.append((seconds, line[line.index("]") + 1:].strip()))
+    result = []
+    for t in times:
+        text = " ".join(txt for sec, txt in lines if t - before <= sec <= t + after and txt)
+        if text:
+            result.append(f"[{fmt_time(t)}] {text}")
+    return result
+
+
 def transcribe(path: Path, progress: ProgressFn) -> str:
     progress("Lade Spracherkennung (beim ersten Mal wird das Modell heruntergeladen)…")
     model = _get_whisper()
@@ -288,7 +314,8 @@ def process(doc_id: int) -> None:
                     raise llm.LimitError("Die Seiten sind Bilder oder Handschrift, und die KI konnte sie noch nicht lesen "
                                          "(Tageslimit). Wird automatisch später nochmals versucht.")
                 raise ValueError("Im PDF wurde kein Text gefunden (evtl. nur Bilder oder Handschrift).")
-            db.update_document(doc_id, raw_text=str(raw), clean_text=str(raw), images_missing=raw.images_missing)
+            db.update_document(doc_id, raw_text=str(raw), clean_text=str(raw), images_missing=raw.images_missing,
+                               blank_pages=raw.blank_pages)
             index(doc_id, raw, progress)
         elif doc["kind"] == "text":
             db.update_document(doc_id, clean_text=doc["raw_text"])
@@ -300,7 +327,11 @@ def process(doc_id: int) -> None:
                 raise ValueError("In der Aufnahme wurde keine Sprache erkannt.")
             clean = clean_transcript(raw, progress)
             db.update_document(doc_id, clean_text=clean)
-            db.update_document(doc_id, summary=summarize(clean, progress))
+            summary = summarize(clean, progress)
+            marked = marked_passages(raw, doc.get("marks", ""))
+            if marked:
+                summary += "\n\n## Von dir als wichtig markiert\n" + "\n".join(f"- {m}" for m in marked)
+            db.update_document(doc_id, summary=summary)
             index(doc_id, clean, progress)
             if clean.strip():
                 progress("Erstelle Karteikarten…")

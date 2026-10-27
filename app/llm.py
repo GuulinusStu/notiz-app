@@ -65,6 +65,7 @@ def chat(messages: list[dict], *, json_mode: bool = False, temperature: float = 
     payload = {"model": model, "messages": messages, "temperature": temperature}
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
+    _count_request()
     try:
         r = httpx.post(f"{config.OPENROUTER_URL}/chat/completions", json=payload,
                        headers=headers, timeout=timeout)
@@ -83,6 +84,49 @@ def chat(messages: list[dict], *, json_mode: bool = False, temperature: float = 
         raise LLMError(f"OpenRouter-Fehler: {data['error'].get('message', data['error'])}")
     content = (data["choices"][0]["message"].get("content") or "")
     return _THINK.sub("", content).strip()
+
+
+FREE_DAILY_LIMIT = 50  # ohne Guthaben bei OpenRouter
+
+
+def _today_utc() -> str:
+    import datetime
+    return datetime.datetime.now(datetime.timezone.utc).date().isoformat()
+
+
+def _count_request() -> None:
+    """Zählt die eigenen KI-Anfragen pro Tag (OpenRouter setzt das Limit um Mitternacht UTC zurück)."""
+    day, _, count = db.get_setting("requests_today", "").partition(":")
+    used = int(count) if day == _today_utc() and count.isdigit() else 0
+    db.set_setting("requests_today", f"{_today_utc()}:{used + 1}")
+
+
+_quota_cache: dict = {}
+
+
+def quota() -> dict:
+    """Wie viele KI-Anfragen heute noch gehen. Fragt OpenRouter (kostet keine Anfrage), sonst eigene Zählung."""
+    import time
+    if _quota_cache.get("ts", 0) > time.time() - 60:
+        return _quota_cache["value"]
+    day, _, count = db.get_setting("requests_today", "").partition(":")
+    used = int(count) if day == _today_utc() and count.isdigit() else 0
+    value = {"used": used, "limit": FREE_DAILY_LIMIT, "remaining": max(0, FREE_DAILY_LIMIT - used), "source": "app"}
+    if api_key():
+        try:
+            r = httpx.get(f"{config.OPENROUTER_URL}/key", headers=_headers(), timeout=10)
+            data = r.json().get("data", {}) if r.status_code == 200 else {}
+            daily = data.get("free_model_daily_requests")
+            if isinstance(daily, dict) and "limit" in daily:
+                value = {"used": daily.get("used", 0), "limit": daily["limit"],
+                         "remaining": daily.get("remaining", max(0, daily["limit"] - daily.get("used", 0))),
+                         "source": "openrouter"}
+            if data.get("is_free_tier") is False and not isinstance(daily, dict):
+                value = {**value, "limit": 1000, "remaining": max(0, 1000 - used)}
+        except (httpx.HTTPError, ValueError, LLMError):
+            pass
+    _quota_cache.update(ts=time.time(), value=value)
+    return value
 
 
 def ask(system: str, user: str, **kwargs) -> str:
