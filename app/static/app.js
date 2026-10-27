@@ -725,7 +725,7 @@ $("#note-save").addEventListener("click", (e) => busy(e.target, "Speichere…", 
 
 // --- Aufnahme ----------------------------------------------------------------
 
-let recorder = null, recChunks = [], recStart = 0, recTimer = null, wakeLock = null, recMarks = [];
+let recorder = null, recChunks = [], recStart = 0, recTimer = null, wakeLock = null, recMarks = [], recStarting = false;
 
 // Laufende Aufnahmen werden alle 10 s im Browser zwischengespeichert, damit bei einem Absturz
 // oder geschlossenen Fenster nichts verloren geht.
@@ -781,7 +781,10 @@ $("#audio-upload").addEventListener("click", (e) => busy(e.target, "Lade hoch…
   toast("Hochgeladen. Die Lektion wird jetzt verarbeitet.");
 }));
 
-$("#rec-btn").addEventListener("click", () => (recorder ? stopRecording() : startRecording()));
+$("#rec-btn").addEventListener("click", () => {
+  if (recStarting) return; // ein zweiter Klick, während das Mikrofon noch startet, gäbe zwei Aufnahmen
+  if (recorder) stopRecording(); else startRecording();
+});
 
 $("#rec-mark").addEventListener("click", () => {
   if (!recorder) return;
@@ -793,18 +796,19 @@ $("#rec-mark").addEventListener("click", () => {
 
 async function startRecording() {
   if ($("#rec-subject").value === "__new__" && !recordSubject()) { toast("Gib dem neuen Fach einen Namen.", true); return; }
+  recStarting = true;
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: true } });
     const mime = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/webm"].find((m) => MediaRecorder.isTypeSupported(m));
     recorder = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 48000 } : undefined);
-    recChunks = [];
+    const chunks = recChunks = []; // jede Aufnahme hat ihre eigene Liste; das erste Stück enthält den Dateikopf
     recMarks = [];
     await recStore.clear();
     await recStore.add({ meta: true, started: Date.now(), type: recorder.mimeType || "audio/webm",
       title: $("#rec-title").value, subject: recordSubject(), marks: [] });
     recorder.ondataavailable = (e) => {
       if (!e.data.size) return;
-      recChunks.push(e.data);
+      chunks.push(e.data);
       recStore.add({ blob: e.data });
     };
     recorder.start(10000); // alle 10 s ein Stück, damit bei einem Absturz weniger verloren geht
@@ -822,7 +826,15 @@ async function startRecording() {
   } catch (e) {
     recorder = null;
     toast("Das Mikrofon liess sich nicht starten: " + e.message, true);
+  } finally {
+    recStarting = false;
   }
+}
+
+// Dateiname mit Ortszeit (toISOString wäre UTC und eine Stunde daneben)
+function localStamp(d = new Date()) {
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}-${p(d.getMinutes())}`;
 }
 
 function saveBlobAsFile(blob, ext) {
@@ -845,7 +857,7 @@ function stopRecording() {
     const ext = type.includes("ogg") ? "ogg" : "webm";
     const blob = new Blob(recChunks, { type });
     try {
-      await uploadAudio(blob, `aufnahme-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-")}.${ext}`, { marks: recMarks });
+      await uploadAudio(blob, `aufnahme-${localStamp()}.${ext}`, { marks: recMarks });
       await recStore.clear();
       $("#rec-state").textContent = "Gespeichert. Die App macht daraus jetzt Text, Zusammenfassung und Karteikarten.";
       toast("Lektion gespeichert.");

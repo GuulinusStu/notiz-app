@@ -281,6 +281,9 @@ def upload_pdf(files: list[UploadFile] = File(...), subject: str = Form("")):
 @app.post("/api/upload/audio")
 def upload_audio(file: UploadFile = File(...), title: str = Form(""), subject: str = Form(""), marks: str = Form("")):
     path = save_upload(file, AUDIO_TYPES)
+    if not ingest.audio_readable(path):
+        path.unlink(missing_ok=True)
+        raise HTTPException(400, "Die Aufnahme ist beschädigt oder unvollständig und kann nicht gelesen werden.")
     title = title.strip() or Path(file.filename).stem
     doc_id = db.create_document(title, "lesson", subject.strip(), str(path))
     if marks.strip():

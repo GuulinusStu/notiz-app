@@ -210,6 +210,21 @@ def load_audio(path: Path) -> np.ndarray:
     return np.concatenate(parts).astype(np.float32) / 32768.0
 
 
+def audio_readable(path: Path) -> bool:
+    """Prüft beim Hochladen, ob sich die Datei überhaupt öffnen lässt (z. B. fehlender Dateikopf)."""
+    try:
+        import av
+        with av.open(str(path), mode="r") as container:
+            if not container.streams.audio:
+                return False
+            next(container.decode(audio=0), None)
+        return True
+    except ImportError:
+        return True  # ohne PyAV später beim Verarbeiten prüfen
+    except Exception:
+        return False
+
+
 def marked_passages(raw: str, marks: str, before: int = 30, after: int = 10) -> list[str]:
     """Was rund um die „Wichtig“-Markierungen gesagt wurde (aus dem Transkript mit Zeitangaben)."""
     times = sorted({int(float(m)) for m in (marks or "").split(",") if m.strip().replace(".", "", 1).isdigit()})

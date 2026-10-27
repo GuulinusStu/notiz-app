@@ -1,5 +1,7 @@
 import datetime
 
+import pytest
+
 from fastapi.testclient import TestClient
 
 from app import db, exams, ingest, llm
@@ -68,10 +70,22 @@ def test_marked_passages_from_transcript():
 def test_audio_upload_keeps_marks(tmp_path, monkeypatch):
     from app import worker
     monkeypatch.setattr(worker, "enqueue", lambda doc_id: None)
+    monkeypatch.setattr(ingest, "audio_readable", lambda path: True)
     with TestClient(app) as client:
         r = client.post("/api/upload/audio", files={"file": ("a.webm", b"x", "audio/webm")},
                         data={"title": "Lektion", "subject": "Info", "marks": "12.5,70"})
         assert db.get_document(r.json()["id"])["marks"] == "12.5,70"
+
+
+def test_broken_audio_upload_is_refused(monkeypatch):
+    pytest.importorskip("av")
+    from app import worker
+    monkeypatch.setattr(worker, "enqueue", lambda doc_id: None)
+    with TestClient(app) as client:
+        # Mitten aus einer webm-Datei, ohne Dateikopf (so wie ein verlorenes erstes Stück)
+        r = client.post("/api/upload/audio", files={"file": ("a.webm", bytes.fromhex("411481 04ec807b83") * 50, "audio/webm")})
+        assert r.status_code == 400 and "beschädigt" in r.json()["detail"]
+        assert not db.list_documents()
 
 
 def test_blank_pdf_pages_are_counted(tmp_path):
