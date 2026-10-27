@@ -105,8 +105,10 @@ def make_quiz(doc: dict | None = None, n: int = 5, subject: str | None = None,
         right = q.get("richtig")
         if (isinstance(q.get("frage"), str) and isinstance(options, list) and len(options) >= 2
                 and isinstance(right, int) and 0 <= right < len(options)):
-            questions.append({"frage": q["frage"], "optionen": [str(o) for o in options],
-                              "richtig": right, "erklaerung": str(q.get("erklaerung", ""))})
+            # Manche Modelle setzen die richtige Antwort immer an die erste Stelle: mischen.
+            order = random.sample(range(len(options)), len(options))
+            questions.append({"frage": q["frage"], "optionen": [str(options[i]) for i in order],
+                              "richtig": order.index(right), "erklaerung": str(q.get("erklaerung", ""))})
     if not questions:
         raise llm.LLMError("Die KI hat keine brauchbaren Fragen erstellt. Bitte nochmals versuchen.")
     return questions

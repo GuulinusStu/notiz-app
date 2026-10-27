@@ -1,4 +1,5 @@
 import json
+import random
 
 import numpy as np
 import pytest
@@ -96,7 +97,7 @@ def test_quiz_and_flashcards_drop_invalid_items(fake_llm):
     ingest.process(doc_id)
     doc = db.get_document(doc_id)
     quiz = study.make_quiz(doc)
-    assert len(quiz) == 1 and quiz[0]["richtig"] == 1
+    assert len(quiz) == 1 and quiz[0]["optionen"][quiz[0]["richtig"]] == "2"
     assert study.make_flashcards(doc) == 1
     counts = db.flashcard_counts()
     assert counts["total"] == 1 and counts["due"] == 1
@@ -250,3 +251,13 @@ def test_transcribe_passes_decoded_audio_to_whisper(tmp_path, monkeypatch):
     monkeypatch.setattr(ingest, "_get_whisper", lambda: FakeWhisper())
     assert ingest.transcribe(tmp_path / "x.webm", lambda _m: None) == "[00:00] Hallo Klasse"
     assert isinstance(seen["audio"], np.ndarray)
+
+
+def test_quiz_options_are_shuffled_and_answer_follows(fake_llm, monkeypatch):
+    positions = set()
+    for seed in range(12):
+        random.seed(seed)
+        q = study.make_quiz(subject=None, excerpts=[{"doc_id": 1, "title": "t", "text": "x"}])[0]
+        assert q["optionen"][q["richtig"]] == "2"
+        positions.add(q["richtig"])
+    assert len(positions) > 1
