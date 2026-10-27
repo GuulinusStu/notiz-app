@@ -14,7 +14,17 @@ if not exist .venv (
 )
 
 call .venv\Scripts\activate.bat
-python -m pip install --quiet --upgrade pip
-pip install --quiet -r requirements.txt
-python -m app
-pause
+
+rem Pakete nur installieren, wenn sich requirements.txt geaendert hat (spart Zeit und Internet beim Start)
+set "REQ_HASH="
+for /f "delims=" %%h in ('certutil -hashfile requirements.txt SHA256 ^| findstr /v ":"') do if not defined REQ_HASH set "REQ_HASH=%%h"
+set "OLD_HASH="
+if exist .venv\requirements.sha256 set /p OLD_HASH=<.venv\requirements.sha256
+if not "%REQ_HASH%"=="%OLD_HASH%" (
+  echo Installiere Pakete...
+  python -m pip install --quiet --upgrade pip
+  pip install --quiet -r requirements.txt && (echo %REQ_HASH%)>.venv\requirements.sha256
+)
+
+python -m app %*
+if "%~1"=="" pause

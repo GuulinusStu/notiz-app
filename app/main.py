@@ -21,11 +21,20 @@ async def lifespan(_app: FastAPI):
     db.init()
     config.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     worker.start()
+    # OneNote-Abgleich und Sicherung erst nach einer Weile, damit der Laptop nach dem Anmelden
+    # nicht gleich ausgelastet ist.
     if onenote.available() and config.ONENOTE_AUTO_SYNC:
-        onenote.start_sync()
+        later(config.STARTUP_DELAY, onenote.start_sync)
     if config.AUTO_BACKUP:
-        start_backups()
+        later(config.STARTUP_DELAY + 60, start_backups)
     yield
+
+
+def later(seconds: float, fn) -> None:
+    import threading
+    timer = threading.Timer(seconds, fn)
+    timer.daemon = True
+    timer.start()
 
 
 def backup_dir() -> Path:
