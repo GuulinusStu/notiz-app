@@ -126,3 +126,27 @@ def test_save_timetable_validates():
     saved = recorder.save_timetable([{"day": 2, "start": "8:5", "end": "9:00", "subject": "Mathe"}], False, "2026-12-31")
     assert saved["entries"][0]["start"] == "08:05" and saved["entries"][0]["id"]
     assert saved["enabled"] is False and saved["paused_until"] == "2026-12-31"
+
+
+class SilentMic(FakeMic):
+    def _feed(self):
+        block = np.zeros(recorder.RATE // 10, dtype=np.int16)
+        while self.running:
+            self.callback(block)
+            time.sleep(0.001)
+
+
+def test_warns_about_silence(fake_mic, monkeypatch):
+    monkeypatch.setattr(recorder, "source_factory", SilentMic)
+    recorder.start("Mathe", "Stumm")
+    for _ in range(50):
+        if recorder.status()["recording"]["silent"]:
+            break
+        time.sleep(0.05)
+    assert recorder.status()["recording"]["silent"]
+
+
+def test_sound_is_not_silence(fake_mic):
+    recorder.start("Mathe", "Laut")
+    time.sleep(1.5)  # FakeMic liefert 10 s Ton in etwa 1 s
+    assert recorder.status()["recording"]["silent"] is False

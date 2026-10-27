@@ -1157,7 +1157,8 @@ async function loadLiveRecording() {
   if (rec) {
     const min = Math.floor(rec.seconds / 60);
     $("#live-text").textContent = `Aufnahme läuft: ${rec.title}${rec.subject ? ` (${subjectName(rec.subject)})` : ""}, seit ${min} Min.`
-      + (rec.until ? `, endet um ${rec.until}` : "") + (rec.marks ? `, ${rec.marks} ⭐` : "");
+      + (rec.until ? `, endet um ${rec.until}` : "") + (rec.marks ? `, ${rec.marks} ⭐` : "")
+      + (rec.silent ? ". Achtung: Das Mikrofon liefert keinen Ton. Ist es stummgeschaltet (Mikrofon-Taste) oder in Windows auf 0 gestellt?" : "");
     if (!liveWasOn) quietNotify(`Aufnahme läuft: ${rec.title}`);
   } else if (liveWasOn) {
     quietNotify("Aufnahme beendet. Die App macht jetzt Text und Zusammenfassung daraus.");

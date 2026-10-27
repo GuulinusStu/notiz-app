@@ -16,6 +16,7 @@ from . import config, db, worker
 
 RATE = 48000
 BITRATE = 32000
+SILENCE_PEAK = 30  # lauter als das wird jedes eingeschaltete Mikrofon in 10 s einmal
 CHECK_EVERY = 20  # Sekunden zwischen zwei Blicken auf den Stundenplan
 MIN_MINUTES_LEFT = 5  # später als 5 Minuten vor Schluss lohnt sich das Starten nicht mehr
 LEAD = timedelta(minutes=1)  # etwas früher beginnen und später aufhören, damit nichts fehlt
@@ -60,6 +61,7 @@ class Recording:
         self._stop = threading.Event()
         self._ready = threading.Event()
         self.error = ""
+        self.silent = False  # nach 10 s nur Stille: Mikrofon stumm oder falsches Gerät
         self._thread = threading.Thread(target=self._run, daemon=True)
 
     def start(self) -> None:
@@ -97,12 +99,18 @@ class Recording:
             self._ready.set()
             return
         self._ready.set()
+        samples, peak = 0, 0
         try:
             while not (self._stop.is_set() and self._audio.empty()):
                 try:
                     block = self._audio.get(timeout=0.5)
                 except queue.Empty:
                     continue
+                if samples < RATE * 10:
+                    samples += len(block)
+                    peak = max(peak, int(np.abs(np.asarray(block, dtype=np.int32)).max(initial=0)))
+                    if samples >= RATE * 10:
+                        self.silent = peak < SILENCE_PEAK
                 frame = av.AudioFrame.from_ndarray(np.asarray(block, dtype=np.int16).reshape(1, -1),
                                                    format="s16", layout="mono")
                 frame.sample_rate = RATE
@@ -130,7 +138,8 @@ class Recording:
     def info(self) -> dict:
         return {"subject": self.subject, "title": self.title, "started": self.started,
                 "seconds": int(time.time() - self.started), "marks": len(self.marks),
-                "until": self.until.strftime("%H:%M") if self.until else None, "scheduled": bool(self.entry_id)}
+                "until": self.until.strftime("%H:%M") if self.until else None, "scheduled": bool(self.entry_id),
+                "silent": self.silent}
 
 
 def _save_document(path: str, subject: str, title: str, marks: list[int]) -> int:
