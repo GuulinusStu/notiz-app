@@ -178,11 +178,40 @@ def fmt_time(seconds: float) -> str:
     return f"{h}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
 
 
+SAMPLE_RATE = 16000  # was Whisper erwartet
+
+
+def load_audio(path: Path) -> np.ndarray:
+    """Liest eine Aufnahme als 16-kHz-Mono für Whisper.
+
+    Eigene Version statt faster_whisper.decode_audio, weil diese PyAV ein Argument
+    (metadata_errors) übergibt, das neuere PyAV-Versionen nicht mehr kennen.
+    """
+    import av
+
+    resampler = av.AudioResampler(format="s16", layout="mono", rate=SAMPLE_RATE)
+    parts = []
+    with av.open(str(path), mode="r") as container:
+        if not container.streams.audio:
+            raise ValueError("Die Datei enthält keine Tonspur.")
+        for frame in container.decode(audio=0):
+            frame.pts = None  # Browser-Aufnahmen (webm) haben lückenhafte Zeitstempel
+            for out in resampler.resample(frame):
+                parts.append(out.to_ndarray().reshape(-1))
+        for out in resampler.resample(None):
+            parts.append(out.to_ndarray().reshape(-1))
+    if not parts:
+        return np.zeros(0, dtype=np.float32)
+    return np.concatenate(parts).astype(np.float32) / 32768.0
+
+
 def transcribe(path: Path, progress: ProgressFn) -> str:
     progress("Lade Spracherkennung (beim ersten Mal wird das Modell heruntergeladen)…")
     model = _get_whisper()
+    progress("Lese Aufnahme…")
+    audio = load_audio(path)
     segments, info = model.transcribe(
-        str(path),
+        audio,
         language=config.WHISPER_LANGUAGE,
         vad_filter=True,  # überspringt Stille und Pausen
         vad_parameters={"min_silence_duration_ms": 1000},

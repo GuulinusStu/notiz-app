@@ -1,5 +1,6 @@
 import json
 
+import numpy as np
 import pytest
 
 from app import config, db, ingest, llm, srs, study
@@ -217,3 +218,34 @@ def test_image_reading_leaves_daily_requests_for_studying(tmp_path, monkeypatch)
     monkeypatch.setattr(llm, "read_image", lambda png, **kw: calls.append(png) or "gelesen")
     text = ingest.extract_pdf_text(path, read_images=True)
     assert len(calls) == 2 and text.images_missing == 1
+
+
+def test_load_audio_resamples_to_16k_mono(tmp_path):
+    import wave
+    path = tmp_path / "ton.wav"
+    t = np.arange(44100) / 44100
+    tone = (np.sin(2 * np.pi * 440 * t) * 0.5 * 32767).astype(np.int16)
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(2)
+        w.setsampwidth(2)
+        w.setframerate(44100)
+        w.writeframes(np.repeat(tone, 2).tobytes())
+    audio = ingest.load_audio(path)
+    assert audio.dtype == np.float32 and audio.ndim == 1
+    assert abs(len(audio) - 16000) < 400
+    assert 0.2 < np.abs(audio).max() <= 1.0
+
+
+def test_transcribe_passes_decoded_audio_to_whisper(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    seen = {}
+
+    class FakeWhisper:
+        def transcribe(self, audio, **kw):
+            seen["audio"] = audio
+            return iter([SimpleNamespace(start=0, end=1, text=" Hallo Klasse ")]), SimpleNamespace(duration=1)
+
+    monkeypatch.setattr(ingest, "load_audio", lambda path: np.zeros(16000, dtype=np.float32))
+    monkeypatch.setattr(ingest, "_get_whisper", lambda: FakeWhisper())
+    assert ingest.transcribe(tmp_path / "x.webm", lambda _m: None) == "[00:00] Hallo Klasse"
+    assert isinstance(seen["audio"], np.ndarray)
