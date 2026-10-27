@@ -53,7 +53,7 @@ def test_text_note_is_indexed_and_searchable(fake_llm):
     b = db.create_document("Geo", "text", raw_text="Bern ist die Bundesstadt der Schweiz.")
     ingest.process(a)
     ingest.process(b)
-    assert db.get_document(a)["status"] == "ready"
+    assert db.get_document(a)["status"] == "ready", db.get_document(a)["error"]
     hits = study.search("Was ist Mitose?", k=1)
     assert hits[0]["doc_id"] == a
     result = study.answer("Was ist Mitose?")

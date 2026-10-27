@@ -29,6 +29,11 @@ def temp_data(tmp_path, monkeypatch):
     while not worker._jobs.empty():
         worker._jobs.get_nowait()
         worker._jobs.task_done()
+    # und einen Auftrag, der gerade läuft, fertig werden lassen (sonst trifft er die Daten des nächsten Tests)
+    import time
+    deadline = time.time() + 10
+    while worker._jobs.unfinished_tasks and time.time() < deadline:
+        time.sleep(0.02)
 
 
 def fake_embed(texts, batch_size=16):
