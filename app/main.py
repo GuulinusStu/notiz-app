@@ -3,6 +3,7 @@ import shutil
 import time
 import uuid
 from contextlib import asynccontextmanager
+from datetime import date
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -10,7 +11,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import config, db, exams, ingest, llm, onenote, srs, study, worker
+from . import config, db, exams, ingest, llm, onenote, recorder, srs, study, worker
 
 PDF_TYPES = {".pdf"}
 AUDIO_TYPES = {".webm", ".ogg", ".mp3", ".m4a", ".wav", ".mp4", ".aac", ".flac", ".opus"}
@@ -21,6 +22,9 @@ async def lifespan(_app: FastAPI):
     db.init()
     config.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     worker.start()
+    recorder.recover()
+    if config.AUTO_RECORD:
+        recorder.start_scheduler()
     # OneNote-Abgleich und Sicherung erst nach einer Weile, damit der Laptop nach dem Anmelden
     # nicht gleich ausgelastet ist.
     if onenote.available() and config.ONENOTE_AUTO_SYNC:
@@ -283,6 +287,64 @@ def upload_audio(file: UploadFile = File(...), title: str = Form(""), subject: s
         db.update_document(doc_id, marks=",".join(m for m in marks.split(",") if m.strip())[:2000])
     worker.enqueue(doc_id)
     return {"id": doc_id}
+
+
+# --- Aufnahme auf dem Laptop und Stundenplan ----------------------------------
+
+class TimetableIn(BaseModel):
+    entries: list[dict]
+    enabled: bool = True
+    paused_until: str = ""
+
+
+@app.get("/api/timetable")
+def get_timetable():
+    return {**recorder.timetable(), **recorder.status(), "skipped": sorted(recorder._done_today(date.today().isoformat()))}
+
+
+@app.put("/api/timetable")
+def put_timetable(body: TimetableIn):
+    try:
+        return recorder.save_timetable(body.entries, body.enabled, body.paused_until)
+    except (ValueError, KeyError, IndexError) as e:
+        raise HTTPException(400, str(e) if "Lektion" in str(e) else "Bitte Tag, Start und Ende (z. B. 08:15) angeben.")
+
+
+@app.post("/api/timetable/{entry_id}/skip")
+def skip_lesson(entry_id: str):
+    recorder.skip_today(entry_id)
+    return {"ok": True}
+
+
+@app.get("/api/recording")
+def recording_status():
+    return recorder.status()
+
+
+class RecordIn(BaseModel):
+    subject: str = ""
+    title: str = ""
+
+
+@app.post("/api/recording/start")
+def recording_start(body: RecordIn):
+    try:
+        return recorder.start(body.subject.strip(), body.title.strip() or f"Aufnahme {date.today():%d.%m.%Y}")
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/recording/stop")
+def recording_stop():
+    return {"id": recorder.stop()}
+
+
+@app.post("/api/recording/mark")
+def recording_mark():
+    try:
+        return {"marks": recorder.mark()}
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
 
 
 @app.get("/api/onenote")

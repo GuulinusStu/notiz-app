@@ -46,6 +46,12 @@
       </div>
 
       <div id="banner" class="banner" hidden></div>
+      <div id="live-rec" class="live-rec" hidden>
+        <span class="live-dot" aria-hidden="true"></span>
+        <span id="live-text"></span>
+        <button id="live-mark" class="mark-btn">⭐ Wichtig</button>
+        <button id="live-stop">Stoppen und speichern</button>
+      </div>
 
       <!-- Übersicht -->
       <section id="view-home" class="view">
@@ -300,6 +306,23 @@
             <summary>Audiodatei hochladen</summary>
             <div class="row" style="margin-top:8px"><input type="file" id="audio-file" accept="audio/*,video/mp4,.m4a,.mp3,.wav,.webm,.ogg" style="flex:1"><button id="audio-upload">Hochladen</button></div>
           </details>
+        </div>
+        <div class="panel">
+          <h2>Stundenplan: automatisch aufnehmen</h2>
+          <p class="hint">Trag deine Lektionen ein. Die App nimmt dann zur Lektion von selbst auf, 1 Minute vor Beginn bis 2 Minuten nach Schluss,
+            und macht danach wie gewohnt Text, Zusammenfassung und Karteikarten. Dafür muss kein Browserfenster offen sein,
+            nur der Laptop eingeschaltet und aufgeklappt.</p>
+          <div class="row tt-head">
+            <label class="check"><input type="checkbox" id="tt-enabled"> Automatisch aufnehmen</label>
+            <label class="check">Pause bis (Ferien) <input type="date" id="tt-pause"></label>
+          </div>
+          <p id="tt-error" class="banner" hidden></p>
+          <div id="tt-list" class="tt-list"></div>
+          <div class="row">
+            <button id="tt-add">+ Lektion</button>
+            <button id="tt-save" class="primary">Stundenplan speichern</button>
+          </div>
+          <p id="tt-next" class="hint"></p>
         </div>
       </section>
 

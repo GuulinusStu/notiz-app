@@ -32,3 +32,5 @@ IMAGE_DAILY_BUDGET = int(os.environ.get("NOTIZAPP_IMAGE_DAILY_BUDGET", "25"))
 AUTO_BACKUP = os.environ.get("NOTIZAPP_AUTO_BACKUP", "1") == "1"
 # Sekunden nach dem Start, bevor OneNote-Abgleich und Sicherung laufen (schont den Laptop beim Anmelden)
 STARTUP_DELAY = float(os.environ.get("NOTIZAPP_STARTUP_DELAY", "120"))
+# Lektionen nach Stundenplan automatisch aufnehmen
+AUTO_RECORD = os.environ.get("NOTIZAPP_AUTO_RECORD", "1") == "1"

@@ -114,7 +114,7 @@ function show(view) {
   if (view === "calendar") loadCalendar();
   if (view === "subjects") renderSubjectAdmin();
   if (view !== "notes") setSelecting(false);
-  if (view === "record") { fillSubjectSelect($("#rec-subject"), subject ?? "", true); checkUnsavedRecording(); }
+  if (view === "record") { fillSubjectSelect($("#rec-subject"), subject ?? "", true); checkUnsavedRecording(); loadTimetable(); }
   if (view === "learn") loadMistakes();
   if (view === "learn") $("#learn-scope").textContent = subject === null
     ? "Ich suche in allen Fächern. Wähle ein Fach, um gezielter zu fragen."
@@ -1037,6 +1037,147 @@ $("#explain-result").addEventListener("click", (e) => {
   if (b) openDoc(Number(b.dataset.id));
 });
 
+// --- Stundenplan und Aufnahme auf dem Laptop ------------------------------------
+
+const DAYS = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"];
+let timetable = [], timetableSkipped = [], liveWasOn = false;
+
+async function loadTimetable() {
+  try {
+    const t = await api("/api/timetable");
+    timetable = t.entries;
+    timetableSkipped = t.skipped || [];
+    $("#tt-enabled").checked = t.enabled;
+    $("#tt-pause").value = t.paused_until || "";
+    renderTimetable();
+    showRecordError(t.error);
+  } catch (e) { toast(e.message, true); }
+}
+
+function showRecordError(error) {
+  $("#tt-error").hidden = !error;
+  $("#tt-error").textContent = error ? `${error} Prüfe, ob ein Mikrofon angeschlossen und in Windows erlaubt ist.` : "";
+}
+
+function renderTimetable() {
+  const box = $("#tt-list");
+  if (!timetable.length) {
+    box.innerHTML = '<p class="tt-empty">Noch keine Lektionen. Füg mit „+ Lektion“ die erste hinzu.</p>';
+  } else {
+    box.innerHTML = timetable.map((e, i) => `
+      <div class="tt-row${e.active ? "" : " off"}" data-i="${i}">
+        <select data-k="day" aria-label="Tag">${DAYS.map((d, n) => `<option value="${n}"${n === e.day ? " selected" : ""}>${d}</option>`).join("")}</select>
+        <input type="time" data-k="start" value="${esc(e.start)}" aria-label="Beginn">
+        <input type="time" data-k="end" value="${esc(e.end)}" aria-label="Ende">
+        <select data-k="subject" class="tt-subject" aria-label="Fach"></select>
+        <input data-k="title" class="tt-title" value="${esc(e.title)}" placeholder="Name, z. B. Mathe bei Frau Keller" aria-label="Name">
+        <label class="check" title="Diese Lektion aufnehmen"><input type="checkbox" data-k="active"${e.active ? " checked" : ""}> an</label>
+        <button data-skip="${esc(e.id || "")}" ${!e.id || timetableSkipped.includes(e.id) ? "disabled" : ""} title="Nur heute nicht aufnehmen">Heute nicht</button>
+        <button class="danger" data-del="${i}" aria-label="Lektion entfernen">✕</button>
+      </div>`).join("");
+    $$(".tt-row").forEach((row) => fillSubjectSelect(row.querySelector('[data-k="subject"]'), timetable[row.dataset.i].subject));
+  }
+  $("#tt-next").textContent = nextLessonText();
+}
+
+function nextLessonText() {
+  if (!$("#tt-enabled").checked) return "Automatisches Aufnehmen ist ausgeschaltet.";
+  const now = new Date();
+  const pause = $("#tt-pause").value;
+  for (let add = 0; add < 8; add++) {
+    const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() + add);
+    const iso = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
+    if (pause && iso <= pause) continue;
+    const weekday = (day.getDay() + 6) % 7;
+    const hm = add === 0 ? now.toTimeString().slice(0, 5) : "00:00";
+    const next = timetable.filter((e) => e.active && e.day === weekday && e.end > hm && !(add === 0 && timetableSkipped.includes(e.id)))
+      .sort((a, b) => a.start.localeCompare(b.start))[0];
+    if (next) {
+      const when = add === 0 ? "heute" : add === 1 ? "morgen" : `am ${DAYS[weekday]}`;
+      return `Nächste Aufnahme: ${when} um ${next.start}, ${next.title || next.subject || "Lektion"}.`;
+    }
+  }
+  return timetable.length ? "In den nächsten Tagen steht keine Aufnahme an." : "";
+}
+
+$("#tt-list").addEventListener("input", (e) => {
+  const row = e.target.closest(".tt-row");
+  const k = e.target.dataset.k;
+  if (!row || !k) return;
+  const entry = timetable[row.dataset.i];
+  entry[k] = k === "active" ? e.target.checked : k === "day" ? Number(e.target.value) : e.target.value;
+  if (k === "active") row.classList.toggle("off", !e.target.checked);
+});
+
+$("#tt-list").addEventListener("click", async (e) => {
+  const del = e.target.closest("[data-del]");
+  if (del) { timetable.splice(Number(del.dataset.del), 1); renderTimetable(); return; }
+  const skip = e.target.closest("[data-skip]");
+  if (skip) {
+    await api(`/api/timetable/${encodeURIComponent(skip.dataset.skip)}/skip`, { method: "POST" });
+    timetableSkipped.push(skip.dataset.skip);
+    renderTimetable();
+    toast("Diese Lektion wird heute nicht aufgenommen.");
+  }
+});
+
+$("#tt-add").addEventListener("click", () => {
+  const last = timetable[timetable.length - 1];
+  const day = last ? last.day : Math.min((new Date().getDay() + 6) % 7, 4);
+  timetable.push({ day, start: last ? last.end : "08:00", end: "", subject: subject ?? "", title: "", active: true });
+  renderTimetable();
+  $$(".tt-row").at(-1).querySelector('[data-k="end"]').focus();
+});
+
+$("#tt-enabled").addEventListener("change", () => ($("#tt-next").textContent = nextLessonText()));
+$("#tt-pause").addEventListener("change", () => ($("#tt-next").textContent = nextLessonText()));
+
+$("#tt-save").addEventListener("click", (e) => busy(e.currentTarget, "Speichere…", async () => {
+  const missing = timetable.find((t) => !t.start || !t.end);
+  if (missing) { toast("Bitte bei jeder Lektion Beginn und Ende eintragen.", true); return; }
+  const t = await api("/api/timetable", { method: "PUT", body: JSON.stringify({
+    entries: timetable, enabled: $("#tt-enabled").checked, paused_until: $("#tt-pause").value }) });
+  timetable = t.entries;
+  renderTimetable();
+  toast("Stundenplan gespeichert.");
+}));
+
+// Ohne Ton: Die Aufnahme startet mitten im Unterricht.
+function quietNotify(text) {
+  toast(text);
+  try { if (Notification.permission === "granted") new Notification("Notiz-App", { body: text, silent: true }); } catch { /* egal */ }
+}
+
+async function loadLiveRecording() {
+  let s;
+  try { s = await api("/api/recording"); } catch { return; }
+  const rec = s.recording;
+  $("#live-rec").hidden = !rec;
+  if (!$("#view-record").hidden) showRecordError(s.error);
+  if (rec) {
+    const min = Math.floor(rec.seconds / 60);
+    $("#live-text").textContent = `Aufnahme läuft: ${rec.title}${rec.subject ? ` (${subjectName(rec.subject)})` : ""}, seit ${min} Min.`
+      + (rec.until ? `, endet um ${rec.until}` : "") + (rec.marks ? `, ${rec.marks} ⭐` : "");
+    if (!liveWasOn) quietNotify(`Aufnahme läuft: ${rec.title}`);
+  } else if (liveWasOn) {
+    quietNotify("Aufnahme beendet. Die App macht jetzt Text und Zusammenfassung daraus.");
+    refreshAll();
+  }
+  liveWasOn = !!rec;
+}
+
+$("#live-mark").addEventListener("click", async () => {
+  try { await api("/api/recording/mark", { method: "POST" }); toast("Stelle als wichtig markiert."); loadLiveRecording(); }
+  catch (e) { toast(e.message, true); }
+});
+
+$("#live-stop").addEventListener("click", (e) => busy(e.currentTarget, "Speichere…", async () => {
+  if (!confirm("Aufnahme jetzt beenden? Diese Lektion wird heute nicht nochmals gestartet.")) return;
+  await api("/api/recording/stop", { method: "POST" });
+  toast("Aufnahme gespeichert. Sie wird jetzt verarbeitet.");
+  await loadLiveRecording();
+}));
+
 // --- Lern-Timer -----------------------------------------------------------------
 
 let timer = null; // { end, minutes, phase: "focus" | "pause", subject }
@@ -1493,3 +1634,5 @@ $("#exam-detail").addEventListener("change", async (e) => {
 refreshAll().then(() => show("home"));
 loadOnenote();
 setInterval(loadStatus, 30000);
+loadLiveRecording();
+setInterval(loadLiveRecording, 15000);
