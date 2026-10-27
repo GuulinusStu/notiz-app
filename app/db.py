@@ -589,6 +589,10 @@ def backup(target_dir, keep: int = 7):
         dst = sqlite3.connect(target)
         try:
             src.backup(dst)
+            # Geheimnisse gehören nicht in eine Sicherung, die in der Cloud landet
+            dst.execute("DELETE FROM settings WHERE key IN ('openrouter_key')")
+            dst.commit()
+            dst.execute("VACUUM")
         finally:
             dst.close()
     finally:

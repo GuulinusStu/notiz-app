@@ -29,9 +29,10 @@ async def lifespan(_app: FastAPI):
 
 
 def backup_dir() -> Path:
-    """Sicherungen in OneDrive, falls vorhanden; so gibt es eine Kopie ausserhalb des Laptops."""
+    """Sicherungen im privaten OneDrive, falls vorhanden; so gibt es eine Kopie ausserhalb des Laptops."""
     import os
-    onedrive = os.environ.get("OneDrive") or os.environ.get("OneDriveConsumer")
+    # Nur das private OneDrive: „OneDrive“ allein kann das Schul- oder Firmen-OneDrive sein.
+    onedrive = os.environ.get("OneDriveConsumer")
     if onedrive and Path(onedrive).is_dir():
         return Path(onedrive) / "Notiz-App-Sicherung"
     return config.DATA_DIR / "sicherung"

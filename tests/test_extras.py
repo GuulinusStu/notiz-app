@@ -100,6 +100,30 @@ def test_backup_keeps_last_copies(tmp_path, monkeypatch):
         assert c.execute("SELECT count(*) FROM documents").fetchone()[0] == 0
 
 
+def test_backup_leaves_out_the_api_key(tmp_path):
+    import sqlite3
+    db.set_setting("openrouter_key", "sk-or-geheim")
+    db.set_setting("chat_model", "x")
+    target = db.backup(tmp_path / "sicherung")
+    with sqlite3.connect(target) as c:
+        keys = {r[0] for r in c.execute("SELECT key FROM settings")}
+    assert "openrouter_key" not in keys and "chat_model" in keys
+    assert db.get_setting("openrouter_key") == "sk-or-geheim"  # Original unverändert
+
+
+def test_backup_uses_only_private_onedrive(tmp_path, monkeypatch):
+    from app import main
+    school = tmp_path / "OneDrive - Schule"
+    school.mkdir()
+    monkeypatch.setenv("OneDrive", str(school))
+    monkeypatch.delenv("OneDriveConsumer", raising=False)
+    assert "OneDrive" not in str(main.backup_dir())
+    private = tmp_path / "OneDrive"
+    private.mkdir()
+    monkeypatch.setenv("OneDriveConsumer", str(private))
+    assert main.backup_dir() == private / "Notiz-App-Sicherung"
+
+
 def test_quota_counts_own_requests_without_key(monkeypatch):
     monkeypatch.setattr(llm, "_quota_cache", {})
     monkeypatch.setattr(llm, "api_key", lambda: "")
