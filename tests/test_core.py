@@ -222,6 +222,7 @@ def test_image_reading_leaves_daily_requests_for_studying(tmp_path, monkeypatch)
 
 def test_load_audio_resamples_to_16k_mono(tmp_path):
     import wave
+    pytest.importorskip("av")  # kommt mit faster-whisper
     path = tmp_path / "ton.wav"
     t = np.arange(44100) / 44100
     tone = (np.sin(2 * np.pi * 440 * t) * 0.5 * 32767).astype(np.int16)
