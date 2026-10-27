@@ -32,7 +32,8 @@ def lower_priority() -> None:
 
 
 def main() -> None:
-    background = "--hintergrund" in sys.argv  # beim automatischen Start mit Windows: kein Browserfenster
+    # beim automatischen Start mit Windows: kein Browserfenster
+    background = "--hintergrund" in sys.argv or os.environ.get("NOTIZAPP_NO_BROWSER") == "1"
     url = f"http://{config.HOST}:{config.PORT}"
     if already_running():
         if background:
