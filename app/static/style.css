@@ -63,7 +63,7 @@ a { color: var(--ink); }
   display: flex; flex-direction: column; gap: 18px;
   position: sticky; top: 0; height: 100vh;
 }
-.brand { font-family: var(--font-head); font-size: 1.35rem; font-weight: 800; padding-left: 8px; }
+.brand { white-space: nowrap; font-family: var(--font-head); font-size: 1.35rem; font-weight: 800; padding-left: 8px; }
 .brand span { color: var(--ink); }
 
 .tabs { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; }
@@ -90,7 +90,8 @@ a { color: var(--ink); }
   font-size: .78rem; font-weight: 700; padding: 0 7px; border-radius: 9px;
   background: var(--marker); color: #3a3000;
 }
-.rail-foot { display: flex; gap: 8px; padding-right: 16px; }
+.rail-foot { display: flex; flex-direction: column; gap: 6px; padding-right: 16px; }
+.rail-foot button { text-align: left; white-space: nowrap; }
 
 .sheet {
   background-color: var(--paper);
@@ -318,10 +319,83 @@ button:disabled { opacity: .5; cursor: not-allowed; }
   .tab { border-radius: var(--radius) var(--radius) 0 0; border-left: 0; border-top: 5px solid var(--tab, var(--line)); padding: 7px 12px; }
   .tab[aria-current="true"] { padding-left: 12px; }
   .tab .name { white-space: nowrap; }
-  .rail-foot { margin: 0; padding: 0; }
+  .rail-foot { margin: 0; padding: 0; flex-direction: row; }
   .rail-foot button { padding: 6px 10px; }
   .views { flex-wrap: nowrap; overflow-x: auto; }
   .views button { white-space: nowrap; padding: 9px 10px; }
   .search { width: 100%; }
   .sheet { border-left: 0; padding-top: 18px; }
 }
+
+/* ---------- Prüfungen ---------- */
+
+.exam-strip {
+  display: flex; gap: 12px; align-items: center; width: 100%; text-align: left;
+  margin-bottom: 18px; padding: 12px 16px; border-radius: var(--radius);
+  background: var(--paper); border: 1.5px solid var(--line); border-left: 6px solid var(--tab, var(--red));
+  font-weight: 400;
+}
+.exam-strip strong { font-family: var(--font-head); }
+.exam-strip .days { margin-left: auto; font-family: var(--font-head); font-weight: 800; white-space: nowrap; }
+
+.cal-layout { display: grid; grid-template-columns: 1.5fr 1fr; gap: 18px; align-items: start; }
+@media (max-width: 900px) { .cal-layout { grid-template-columns: 1fr; } }
+.cal-head, .cal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.cal-head { margin-top: 12px; font-size: .8rem; color: var(--muted); font-weight: 700; text-align: center; }
+.cal-grid { margin-top: 4px; }
+.cal-day {
+  min-height: 74px; padding: 4px 5px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--paper); text-align: left; display: flex; flex-direction: column; gap: 3px;
+  font-weight: 400; cursor: pointer;
+}
+.cal-day:hover { border-color: var(--ink); }
+.cal-day.other { opacity: .4; }
+.cal-day.past .num { color: var(--muted); }
+.cal-day.today { border: 2px solid var(--ink); }
+.cal-day.today .num { color: var(--ink); font-weight: 800; }
+.cal-day .num { font-size: .85rem; }
+.cal-day.plan { background: linear-gradient(var(--ink-soft), var(--ink-soft)), var(--paper); }
+.chip {
+  display: block; font-size: .74rem; line-height: 1.25; padding: 2px 5px; border-radius: 5px;
+  background: var(--tab, var(--ink)); color: #fff; font-weight: 700;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+@media (max-width: 600px) { .cal-day { min-height: 52px; } .chip { font-size: 0; height: 6px; padding: 0; } }
+
+.exam-list { list-style: none; padding: 0; margin: 10px 0; }
+.exam-list li { border-left: 5px solid var(--tab, var(--line)); padding: 8px 10px; margin-bottom: 8px; border-radius: 6px; cursor: pointer; }
+.exam-list li:hover { background: var(--ink-soft); }
+.exam-list .when { float: right; font-family: var(--font-head); font-weight: 800; }
+.exam-list .when.soon { color: var(--red); }
+.bar { height: 6px; border-radius: 3px; background: var(--line); margin-top: 6px; overflow: hidden; }
+.bar span { display: block; height: 100%; background: var(--green); }
+
+.goal { border-top: 1px solid var(--line); padding: 10px 0; }
+.goal label { display: flex; gap: 10px; align-items: flex-start; font-weight: 700; margin: 0; }
+.goal label input { width: auto; margin: 4px 0 0; }
+.goal.done label { color: var(--muted); text-decoration: line-through; }
+.goal .found { margin: 4px 0 0 28px; display: flex; flex-wrap: wrap; gap: 6px; }
+.goal .found button { font-size: .82rem; padding: 2px 9px; }
+.goal .missing { margin: 4px 0 0 28px; color: #b7791f; font-size: .88rem; }
+.plan-list { list-style: none; padding: 0; margin: 8px 0; }
+.plan-list li { display: grid; grid-template-columns: 110px 1fr; gap: 10px; padding: 6px 0; border-bottom: 1px dashed var(--line); }
+.plan-list li.today { font-weight: 700; }
+.plan-list .day { color: var(--muted); }
+.file-button { cursor: pointer; }
+
+/* ---------- Fächer verwalten, Verschieben ---------- */
+
+.subject-admin { list-style: none; padding: 0; margin: 12px 0 0; }
+.subject-admin li { display: flex; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.subject-admin .swatch { width: 8px; align-self: stretch; border-radius: 4px; background: var(--tab); }
+.subject-admin input { flex: 1; margin: 0; }
+.subject-admin .count { color: var(--muted); font-size: .88rem; white-space: nowrap; min-width: 70px; }
+.subject-admin button { padding: 6px 10px; }
+
+.move-bar {
+  position: sticky; bottom: 12px; z-index: 5; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  margin-top: 12px; padding: 10px 14px; border-radius: var(--radius);
+  background: var(--paper); border: 2px solid var(--ink); box-shadow: var(--shadow);
+}
+.doc-list li .pick { width: auto; margin: 0 8px 0 0; }
+.selecting .doc-list li { padding-left: 8px; }

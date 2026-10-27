@@ -16,6 +16,7 @@
     <div class="brand">Notiz<span>-App</span></div>
     <ul id="tabs" class="tabs"></ul>
     <div class="rail-foot">
+      <button id="open-subjects" title="Fächer umbenennen, ordnen, anlegen">✏️ Fächer</button>
       <button id="open-settings" title="Einstellungen">⚙️ Einstellungen</button>
     </div>
   </nav>
@@ -38,6 +39,7 @@
         <button role="tab" data-view="notes">Notizen</button>
         <button role="tab" data-view="learn">Fragen &amp; Quiz</button>
         <button role="tab" data-view="cards">Karteikarten</button>
+        <button role="tab" data-view="calendar">Prüfungen</button>
         <button role="tab" data-view="record" class="rec">● Aufnehmen</button>
       </div>
 
@@ -45,6 +47,7 @@
 
       <!-- Übersicht -->
       <section id="view-home" class="view">
+        <button id="home-exam" class="exam-strip" hidden></button>
         <div class="today">
           <div class="panel">
             <p id="home-lead" class="lead"></p>
@@ -71,11 +74,19 @@
           <div class="row between">
             <h2 id="notes-count">Notizen</h2>
             <div class="row">
+              <button id="select-mode" class="link">Auswählen und verschieben</button>
               <button id="expand-all" class="link">Alle aufklappen</button>
               <button id="collapse-all" class="link">Alle zuklappen</button>
             </div>
           </div>
           <div id="doc-tree"></div>
+          <div id="move-bar" class="move-bar" hidden>
+            <span id="move-count">0 ausgewählt</span>
+            <label class="row" style="gap:6px">nach <select id="move-target" style="width:auto;margin:0"></select></label>
+            <input id="move-new" placeholder="Name des neuen Fachs" hidden style="width:auto;margin:0">
+            <button id="move-go" class="primary">Verschieben</button>
+            <button id="move-cancel" class="link">Abbrechen</button>
+          </div>
         </div>
         <div class="panel flat">
           <h2>Notizen hinzufügen</h2>
@@ -105,7 +116,7 @@
         <div class="panel">
           <div class="doc-head row between">
             <div>
-              <h2 id="doc-title"></h2>
+              <h2 id="doc-title"></h2> <button id="doc-rename" class="link">Umbenennen</button>
               <p id="doc-meta" class="hint"></p>
             </div>
             <div class="row">
@@ -172,6 +183,70 @@
             <summary>Karten ansehen und bearbeiten</summary>
             <table class="card-table"><tbody id="card-list"></tbody></table>
           </details>
+        </div>
+      </section>
+
+      <!-- Prüfungen -->
+      <section id="view-calendar" class="view" hidden>
+        <div class="cal-layout">
+          <div class="panel">
+            <div class="row between">
+              <h2 id="cal-title"></h2>
+              <div class="row" style="gap:4px">
+                <button id="cal-prev" aria-label="Vorheriger Monat">‹</button>
+                <button id="cal-today">Heute</button>
+                <button id="cal-next" aria-label="Nächster Monat">›</button>
+              </div>
+            </div>
+            <div class="cal-head"><span>Mo</span><span>Di</span><span>Mi</span><span>Do</span><span>Fr</span><span>Sa</span><span>So</span></div>
+            <div id="cal-grid" class="cal-grid"></div>
+            <p class="hint">Klick auf einen Tag, um dort eine Prüfung einzutragen. Blau hinterlegt sind die Lerntage aus deinem Lernplan.</p>
+          </div>
+          <div class="panel">
+            <div class="row between">
+              <h2>Nächste Prüfungen</h2>
+              <button id="exam-new" class="primary">Prüfung eintragen</button>
+            </div>
+            <ul id="exam-list" class="exam-list"></ul>
+            <a id="exam-ics" class="link" href="/api/exams.ics">In den Handy-Kalender übernehmen (.ics)</a>
+          </div>
+        </div>
+
+        <div id="exam-form" class="panel" hidden>
+          <h2 id="exam-form-title">Prüfung eintragen</h2>
+          <div class="row" style="align-items:flex-start">
+            <div style="flex:1;min-width:180px"><label for="exam-subject">Fach</label><select id="exam-subject"></select>
+              <input id="exam-subject-new" placeholder="Name des neuen Fachs" hidden></div>
+            <div style="flex:2;min-width:200px"><label for="exam-title">Thema</label><input id="exam-title" placeholder="z. B. Zahlensysteme"></div>
+            <div style="flex:1;min-width:150px"><label for="exam-date">Datum</label><input id="exam-date" type="date"></div>
+          </div>
+          <label for="exam-goals">Lernziele <span class="hint">(eine pro Zeile, falls du welche hast)</span></label>
+          <textarea id="exam-goals" rows="6" placeholder="Ich kann eine Binärzahl ins Dezimalsystem umrechnen.&#10;Ich kann das Hexadezimalsystem erklären."></textarea>
+          <div class="row">
+            <label class="button file-button">Lernziele aus PDF übernehmen<input type="file" id="exam-goals-file" accept=".pdf" hidden></label>
+            <span class="hint">Die App sucht dann selbst die passenden Notizen zu jedem Lernziel.</span>
+          </div>
+          <div class="row" style="margin-top:12px">
+            <button id="exam-save" class="primary">Speichern</button>
+            <button id="exam-cancel">Abbrechen</button>
+            <button id="exam-delete" class="danger" hidden>Prüfung löschen</button>
+          </div>
+        </div>
+
+        <div id="exam-detail" class="panel" hidden></div>
+      </section>
+
+      <!-- Fächer verwalten -->
+      <section id="view-subjects" class="view" hidden>
+        <div class="panel">
+          <h2>Fächer verwalten</h2>
+          <p class="hint">Namen ändern, Reihenfolge der Reiter festlegen und neue Fächer anlegen. Gibst du einem Fach den Namen
+            eines anderen, werden beide zusammengelegt. Einzelne Notizen verschiebst du unter „Notizen“ mit „Auswählen und verschieben“.</p>
+          <ul id="subject-admin" class="subject-admin"></ul>
+          <div class="row" style="margin-top:12px">
+            <input id="subject-add-name" placeholder="Neues Fach, z. B. Physik" style="flex:1;margin:0">
+            <button id="subject-add">Fach anlegen</button>
+          </div>
         </div>
       </section>
 

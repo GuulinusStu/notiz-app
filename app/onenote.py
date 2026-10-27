@@ -151,7 +151,8 @@ def sync(progress=lambda _msg: None, *, lister=None, exporter=None, force: bool 
             result["failed"].append({"path": section["path"], "error": str(e)})
             continue
         if doc:
-            db.update_document(doc["id"], title=section["path"], source_path=str(target), summary="",
+            title = {} if doc.get("title_custom") else {"title": section["path"]}  # eigenen Namen behalten
+            db.update_document(doc["id"], **title, source_path=str(target), summary="",
                                status="pending", error="", external_modified=section["lastModified"])
             worker.enqueue(doc["id"])
             result["updated"] += 1

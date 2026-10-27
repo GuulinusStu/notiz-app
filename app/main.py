@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import config, db, ingest, llm, onenote, srs, study, worker
+from . import config, db, exams, ingest, llm, onenote, srs, study, worker
 
 PDF_TYPES = {".pdf"}
 AUDIO_TYPES = {".webm", ".ogg", ".mp3", ".m4a", ".wav", ".mp4", ".aac", ".flac", ".opus"}
@@ -79,6 +79,8 @@ class DocUpdate(BaseModel):
 def update_document(doc_id: int, upd: DocUpdate):
     require_doc(doc_id)
     fields = {k: v.strip() for k, v in upd.model_dump().items() if v is not None}
+    if "title" in fields:
+        fields["title_custom"] = 1
     db.update_document(doc_id, **fields)
     return db.get_document(doc_id)
 
@@ -103,6 +105,43 @@ def subjects():
 class SubjectRename(BaseModel):
     old: str
     new: str = Field(min_length=1, max_length=100)
+
+
+class SubjectNew(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+
+
+class SubjectOrder(BaseModel):
+    order: list[str]
+
+
+class MoveIn(BaseModel):
+    ids: list[int] = Field(min_length=1)
+    subject: str = Field(max_length=100)
+
+
+@app.post("/api/subjects")
+def add_subject(s: SubjectNew):
+    db.add_subject(s.name.strip())
+    return db.list_subjects()
+
+
+@app.post("/api/subjects/order")
+def subject_order(s: SubjectOrder):
+    db.set_subject_order(s.order)
+    return db.list_subjects()
+
+
+@app.delete("/api/subjects")
+def remove_subject(name: str):
+    if not db.remove_subject(name):
+        raise HTTPException(400, "Das Fach ist nicht leer. Verschiebe zuerst die Notizen und Prüfungen in ein anderes Fach.")
+    return db.list_subjects()
+
+
+@app.post("/api/documents/move")
+def move_documents(m: MoveIn):
+    return {"moved": db.move_documents(m.ids, m.subject.strip())}
 
 
 @app.post("/api/subjects/rename")
@@ -274,6 +313,118 @@ def quiz_result(r: QuizResult):
 
 class SubjectIn(BaseModel):
     subject: str
+
+
+# --- Prüfungen ---------------------------------------------------------------
+
+class ExamIn(BaseModel):
+    subject: str = ""
+    title: str = Field(min_length=1, max_length=200)
+    date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    goals_text: str = ""
+
+
+class ExamUpdate(BaseModel):
+    subject: str | None = None
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    date: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    goals_text: str | None = None
+    done: list[bool] | None = None  # abgehakte Lernziele, in derselben Reihenfolge
+
+
+def check_date(date: str) -> str:
+    import datetime
+    try:
+        datetime.date.fromisoformat(date)
+    except ValueError:
+        raise HTTPException(400, "Ungültiges Datum.")
+    return date
+
+
+def require_exam(exam_id: int) -> dict:
+    exam = db.get_exam(exam_id)
+    if not exam:
+        raise HTTPException(404, "Prüfung nicht gefunden.")
+    return exam
+
+
+@app.get("/api/exams")
+def list_exams(subject: str | None = None):
+    return [exams.summary(e) for e in db.list_exams(subject)]
+
+
+@app.post("/api/exams")
+def create_exam(e: ExamIn):
+    goals = exams.merge_goals([], exams.parse_goals(e.goals_text))
+    exam_id = db.create_exam(e.subject.strip(), e.title.strip(), check_date(e.date), goals)
+    return exams.summary(db.get_exam(exam_id))
+
+
+@app.get("/api/exams.ics")
+def exams_ics():
+    return Response(exams.ics(db.list_exams()), media_type="text/calendar; charset=utf-8",
+                    headers={"Content-Disposition": 'attachment; filename="pruefungen.ics"'})
+
+
+@app.get("/api/exams/{exam_id}")
+def get_exam(exam_id: int):
+    exam = require_exam(exam_id)
+    try:
+        goals = exams.materials(exam)
+    except llm.LLMError:
+        goals = [{**g, "docs": []} for g in exam["goals"]]
+    return {**exams.summary(exam), "goals": goals, "plan": exams.plan(exam)}
+
+
+@app.patch("/api/exams/{exam_id}")
+def update_exam(exam_id: int, u: ExamUpdate):
+    exam = require_exam(exam_id)
+    fields = {k: v.strip() for k, v in (("subject", u.subject), ("title", u.title)) if v is not None}
+    if u.date is not None:
+        fields["date"] = check_date(u.date)
+    goals = exam["goals"]
+    if u.goals_text is not None:
+        goals = exams.merge_goals(goals, exams.parse_goals(u.goals_text))
+    if u.done is not None:
+        goals = [{**g, "done": bool(d)} for g, d in zip(goals, u.done)] + goals[len(u.done):]
+    fields["goals"] = goals
+    db.update_exam(exam_id, **fields)
+    return exams.summary(db.get_exam(exam_id))
+
+
+@app.delete("/api/exams/{exam_id}")
+def delete_exam(exam_id: int):
+    require_exam(exam_id)
+    db.delete_exam(exam_id)
+    return {"ok": True}
+
+
+@app.post("/api/exams/{exam_id}/quiz")
+def exam_quiz(exam_id: int, n: int = 8, only_open: bool = True):
+    exam = require_exam(exam_id)
+    return {"fragen": study.make_quiz(n=max(1, min(n, 15)), excerpts=exams.excerpts(exam, only_open))}
+
+
+@app.post("/api/exams/{exam_id}/flashcards")
+def exam_flashcards(exam_id: int, n: int = 15):
+    exam = require_exam(exam_id)
+    return {"created": study.make_flashcards(n=max(1, min(n, 30)), excerpts=exams.excerpts(exam))}
+
+
+@app.post("/api/exams/goals-from-file")
+def goals_from_file(file: UploadFile = File(...)):
+    """Lernziele aus einem PDF (z. B. Lernzielblatt) übernehmen. Nur Text, ohne KI."""
+    import pymupdf
+    data = file.file.read()
+    try:
+        with pymupdf.open(stream=data, filetype="pdf") as pdf:
+            text = "\n".join(page.get_text() for page in pdf)
+    except Exception:
+        raise HTTPException(400, "Die Datei konnte nicht gelesen werden. Bitte ein PDF wählen.")
+    goals = exams.parse_goals(text)
+    if not goals:
+        raise HTTPException(400, "Im PDF wurde kein Text gefunden. Tippe die Lernziele bitte ab.")
+    return {"goals_text": "\n".join(goals)}
 
 
 @app.post("/api/subjects/quiz")

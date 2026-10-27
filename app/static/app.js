@@ -111,6 +111,9 @@ function show(view) {
   if (view === "notes") renderDocs();
   if (view === "cards") loadCards();
   if (view === "settings") loadSettings();
+  if (view === "calendar") loadCalendar();
+  if (view === "subjects") renderSubjectAdmin();
+  if (view !== "notes") setSelecting(false);
   if (view === "record") fillSubjectSelect($("#rec-subject"), subject ?? "", true);
   if (view === "learn") $("#learn-scope").textContent = subject === null
     ? "Ich suche in allen Fächern. Wähle ein Fach, um gezielter zu fragen."
@@ -120,6 +123,7 @@ function show(view) {
 $$(".views button").forEach((b) => b.addEventListener("click", () => show(b.dataset.view)));
 $$("[data-goto]").forEach((b) => b.addEventListener("click", () => show(b.dataset.goto)));
 $("#open-settings").addEventListener("click", () => show("settings"));
+$("#open-subjects").addEventListener("click", () => show("subjects"));
 
 // --- Status und Fächer -------------------------------------------------------
 
@@ -170,7 +174,7 @@ function renderTabs() {
     $("#chat-clear").hidden = true;
     renderTabs();
     renderTitle();
-    show(currentView === "doc" || currentView === "settings" ? "home" : currentView);
+    show(["doc", "settings", "subjects"].includes(currentView) ? "home" : currentView);
   };
 }
 
@@ -230,7 +234,8 @@ async function loadHome() {
   if (s.processing) facts.push(["In Arbeit", plural(s.processing, "Notiz", "Notizen")]);
   if (s.errors) facts.push(["Mit Fehler", plural(s.errors, "Notiz", "Notizen")]);
   $("#home-facts").innerHTML = facts.map(([k, v]) => `<li><span>${k}</span><strong>${esc(v)}</strong></li>`).join("");
-  $("#home-recent").innerHTML = s.recent.length ? s.recent.map((d) => docItem(d, d.title.split(" / ").pop(), true)).join("")
+  loadHomeExam();
+  $("#home-recent").innerHTML = s.recent.length ? s.recent.map((d) => docItem(d, d.title.split(" / ").pop(), "recent")).join("")
     : `<li class="hint">Noch keine Notizen. Synchronisiere OneNote oder nimm eine Lektion auf.</li>`;
 }
 
@@ -253,8 +258,10 @@ async function loadDocs() {
 }
 
 function docItem(d, label, showSubject) {
+  const pick = selecting && showSubject !== "recent"
+    ? `<input type="checkbox" class="pick" data-pick="${d.id}" ${selected.has(d.id) ? "checked" : ""} aria-label="${esc(label)} auswählen">` : "";
   return `<li data-id="${d.id}" tabindex="0">
-    <span class="label">${KIND[d.kind] || ""} ${esc(label)}
+    <span class="label">${pick}${KIND[d.kind] || ""} ${esc(label)}
       ${showSubject && d.subject && subject === null ? `<span class="tag">${esc(d.subject)}</span>` : ""}
       ${d.progress ? `<span class="progress">${esc(d.progress)}</span>`
         : d.images_missing ? `<span class="progress">${plural(d.images_missing, "Bildseite wird", "Bildseiten werden")} später noch gelesen</span>` : ""}</span>
@@ -294,7 +301,7 @@ function renderDocs() {
   }
   const groups = groupDocs(shown);
   tree.innerHTML = groups.map(([group, items]) => `
-    <details class="group" ${groups.length <= 4 ? "open" : ""}>
+    <details class="group" ${groups.length <= 4 || selecting ? "open" : ""}>
       <summary><span class="title">${esc(group)}</span><span class="hint" style="margin:0">${items.length}</span></summary>
       <ul class="doc-list">
         ${items.sort((a, b) => a.label.localeCompare(b.label, "de", { numeric: true })).map(({ doc, label }) => docItem(doc, label, true)).join("")}
@@ -307,6 +314,15 @@ $("#collapse-all").addEventListener("click", () => $$("#doc-tree details").forEa
 
 function openFromList(e) {
   if (e.target.closest("a")) return;
+  if (selecting && e.currentTarget.id === "doc-tree") {
+    const li = e.target.closest("li[data-id]");
+    if (!li) return;
+    const id = Number(li.dataset.id);
+    selected.has(id) ? selected.delete(id) : selected.add(id);
+    li.querySelector(".pick").checked = selected.has(id);
+    updateMoveBar();
+    return;
+  }
   const li = e.target.closest("li[data-id]");
   if (li) openDoc(Number(li.dataset.id));
 }
@@ -323,6 +339,7 @@ async function openDoc(id, keepOutput = false) {
   currentDoc = doc;
   if (currentView !== "doc") show("doc");
   $("#doc-title").textContent = doc.title.split(" / ").pop();
+  $("#doc-title").title = doc.title;
   const meta = [KIND_NAME[doc.kind], doc.title.includes(" / ") ? doc.title.split(" / ").slice(0, -1).join(" › ") : "",
     `hinzugefügt ${dateText(doc.created_at)}`, doc.status !== "ready" ? STATUS[doc.status] : "", doc.progress,
     doc.images_missing ? `${plural(doc.images_missing, "Bildseite", "Bildseiten")} mit Handschrift noch nicht gelesen (Tageslimit), wird automatisch nachgeholt` : ""];
@@ -821,6 +838,351 @@ $("#reprocess-pdfs").addEventListener("click", (e) => {
   if (confirm("Alle PDFs neu einlesen? Das dauert eine Weile und braucht KI-Anfragen.")) reprocess(e.target, false);
 });
 $("#reprocess-errors").addEventListener("click", (e) => reprocess(e.target, true));
+
+// --- Notizen umbenennen und verschieben ---------------------------------------
+
+let selecting = false;
+const selected = new Set();
+
+function setSelecting(on) {
+  if (selecting === on) return;
+  selecting = on;
+  selected.clear();
+  $("#doc-tree").classList.toggle("selecting", on);
+  $("#select-mode").textContent = on ? "Fertig" : "Auswählen und verschieben";
+  $("#move-bar").hidden = !on;
+  if (on) {
+    fillSubjectSelect($("#move-target"), subject ?? subjects[0]?.subject ?? "", false);
+    $("#move-target").insertAdjacentHTML("beforeend", `<option value="__new__">Neues Fach…</option>`);
+    $("#move-target").onchange = () => ($("#move-new").hidden = $("#move-target").value !== "__new__");
+    $("#move-new").hidden = true;
+  }
+  updateMoveBar();
+  if (currentView === "notes") renderDocs();
+}
+
+function updateMoveBar() {
+  $("#move-count").textContent = selected.size ? plural(selected.size, "Notiz ausgewählt", "Notizen ausgewählt") : "Tippe Notizen an, um sie auszuwählen";
+  $("#move-go").disabled = !selected.size;
+}
+
+$("#select-mode").addEventListener("click", () => setSelecting(!selecting));
+$("#move-cancel").addEventListener("click", () => setSelecting(false));
+$("#move-go").addEventListener("click", (e) => busy(e.target, "Verschiebe…", async () => {
+  const target = $("#move-target").value === "__new__" ? $("#move-new").value.trim() : $("#move-target").value;
+  if ($("#move-target").value === "__new__" && !target) throw new Error("Gib dem neuen Fach einen Namen.");
+  const { moved } = await send("/api/documents/move", { ids: [...selected], subject: target });
+  toast(`${plural(moved, "Notiz", "Notizen")} nach „${target || NO_SUBJECT}“ verschoben.`);
+  setSelecting(false);
+  await refreshAll();
+}));
+
+$("#doc-rename").addEventListener("click", async () => {
+  const parts = currentDoc.title.split(" / ");
+  const name = prompt("Neuer Name der Notiz:", parts.pop());
+  if (!name || !name.trim()) return;
+  const title = [...parts, name.trim()].join(" / "); // Notizbuch-Gruppe bleibt erhalten
+  try {
+    await send(`/api/documents/${currentDoc.id}`, { title }, "PATCH");
+    toast("Umbenannt. Der Name bleibt auch nach dem nächsten OneNote-Abgleich.");
+    await loadDocs();
+    openDoc(currentDoc.id, true);
+  } catch (err) { toast(err.message, true); }
+});
+
+// --- Fächer verwalten ---------------------------------------------------------
+
+function renderSubjectAdmin() {
+  const list = subjects.filter((s) => s.subject !== "");
+  $("#subject-admin").innerHTML = list.length ? list.map((s, i) => `<li data-name="${esc(s.subject)}">
+      <span class="swatch" style="--tab:${tabColor(s.subject)}"></span>
+      <input value="${esc(s.subject)}" aria-label="Name von ${esc(s.subject)}">
+      <span class="count">${plural(s.count, "Notiz", "Notizen")}</span>
+      <button data-up ${i === 0 ? "disabled" : ""} aria-label="Nach oben">↑</button>
+      <button data-down ${i === list.length - 1 ? "disabled" : ""} aria-label="Nach unten">↓</button>
+      ${s.count ? "" : `<button data-remove class="danger" aria-label="Fach entfernen">Entfernen</button>`}
+    </li>`).join("") : `<li class="hint">Noch keine Fächer.</li>`;
+}
+
+async function saveOrder(names) {
+  subjects = await send("/api/subjects/order", { order: names });
+  renderTabs();
+  renderSubjectAdmin();
+}
+
+$("#subject-admin").addEventListener("click", async (e) => {
+  const li = e.target.closest("li[data-name]");
+  if (!li) return;
+  const names = subjects.filter((s) => s.subject !== "").map((s) => s.subject);
+  const i = names.indexOf(li.dataset.name);
+  try {
+    if (e.target.closest("[data-up]") && i > 0) [names[i - 1], names[i]] = [names[i], names[i - 1]];
+    else if (e.target.closest("[data-down]") && i < names.length - 1) [names[i + 1], names[i]] = [names[i], names[i + 1]];
+    else if (e.target.closest("[data-remove]")) {
+      subjects = await api("/api/subjects?name=" + encodeURIComponent(li.dataset.name), { method: "DELETE" });
+      toast(`„${li.dataset.name}“ entfernt.`);
+      renderTabs();
+      renderSubjectAdmin();
+      return;
+    } else return;
+    await saveOrder(names);
+  } catch (err) { toast(err.message, true); }
+});
+
+$("#subject-admin").addEventListener("change", async (e) => {
+  const li = e.target.closest("li[data-name]");
+  const old = li?.dataset.name, name = e.target.value.trim();
+  if (!li || !name || name === old) { if (li) e.target.value = old; return; }
+  const merge = subjects.some((s) => s.subject === name);
+  if (merge && !confirm(`„${name}“ gibt es schon. Sollen „${old}“ und „${name}“ zusammengelegt werden?`)) { e.target.value = old; return; }
+  try {
+    await send("/api/subjects/rename", { old, new: name });
+    if (subject === old) { subject = name; saveSubject(); }
+    toast(merge ? `„${old}“ ist jetzt in „${name}“.` : `„${old}“ heisst jetzt „${name}“.`);
+    await refreshAll();
+    renderSubjectAdmin();
+  } catch (err) { toast(err.message, true); }
+});
+
+$("#subject-add").addEventListener("click", async () => {
+  const name = $("#subject-add-name").value.trim();
+  if (!name) { toast("Gib zuerst einen Namen ein.", true); return; }
+  try {
+    subjects = await send("/api/subjects", { name });
+    $("#subject-add-name").value = "";
+    toast(`Fach „${name}“ angelegt.`);
+    renderTabs();
+    renderSubjectAdmin();
+  } catch (err) { toast(err.message, true); }
+});
+$("#subject-add-name").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#subject-add").click(); });
+
+// --- Prüfungen ----------------------------------------------------------------
+
+const MONTHS = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"];
+let calMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+let exams = [];
+let planDays = new Map();   // Datum -> Prüfungen, für die an dem Tag gelernt wird
+let currentExam = null;
+let editingExam = null;
+
+const isoDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const longDate = (iso) => new Date(iso + "T12:00").toLocaleDateString("de-CH", { weekday: "long", day: "numeric", month: "long" });
+const shortDate = (iso) => new Date(iso + "T12:00").toLocaleDateString("de-CH", { weekday: "short", day: "numeric", month: "short" });
+
+function daysText(n) {
+  if (n === 0) return "heute";
+  if (n === 1) return "morgen";
+  if (n < 0) return n === -1 ? "gestern" : `vor ${-n} Tagen`;
+  return `in ${n} Tagen`;
+}
+
+async function loadExams() {
+  exams = await api("/api/exams" + subjectQuery());
+}
+
+async function loadHomeExam() {
+  try { await loadExams(); } catch { return; }
+  const next = exams.find((e) => e.days_left >= 0);
+  const strip = $("#home-exam");
+  strip.hidden = !next;
+  if (!next) return;
+  strip.style.setProperty("--tab", tabColor(next.subject));
+  const goals = next.goals_total ? `, ${next.goals_done} von ${next.goals_total} Lernzielen geschafft` : "";
+  strip.innerHTML = `<span>📅 Nächste Prüfung: <strong>${esc(next.subject ? next.subject + ": " : "")}${esc(next.title)}</strong>
+    <span class="hint">${esc(longDate(next.date))}${goals}</span></span><span class="days">${daysText(next.days_left)}</span>`;
+  strip.onclick = () => { show("calendar"); openExam(next.id); };
+}
+
+async function loadCalendar() {
+  try { await loadExams(); } catch (e) { toast(e.message, true); return; }
+  // Lerntage aus den Plänen der kommenden Prüfungen markieren
+  planDays = new Map();
+  const upcoming = exams.filter((e) => e.days_left > 0);
+  const details = await Promise.all(upcoming.slice(0, 6).map((e) => api(`/api/exams/${e.id}`).catch(() => null)));
+  for (const d of details.filter(Boolean)) {
+    for (const p of d.plan) {
+      if (!planDays.has(p.date)) planDays.set(p.date, []);
+      planDays.get(p.date).push(d);
+    }
+  }
+  renderCalendar();
+  renderExamList();
+}
+
+function renderCalendar() {
+  $("#cal-title").textContent = `${MONTHS[calMonth.getMonth()]} ${calMonth.getFullYear()}`;
+  const start = new Date(calMonth);
+  start.setDate(1 - ((calMonth.getDay() + 6) % 7)); // Montag vor dem Monatsersten
+  const today = isoDate(new Date());
+  const byDate = {};
+  for (const e of exams) (byDate[e.date] ||= []).push(e);
+  let html = "";
+  for (let i = 0; i < 42; i++) {
+    const d = new Date(start);
+    d.setDate(start.getDate() + i);
+    const iso = isoDate(d);
+    const items = byDate[iso] || [];
+    const learn = planDays.get(iso) || [];
+    const cls = ["cal-day", d.getMonth() !== calMonth.getMonth() ? "other" : "", iso === today ? "today" : "",
+      iso < today ? "past" : "", learn.length ? "plan" : ""].join(" ");
+    const label = `${d.getDate()}. ${MONTHS[d.getMonth()]}` + (items.length ? `: ${items.map((e) => e.title).join(", ")}` : "")
+      + (learn.length ? ", Lerntag" : "");
+    html += `<button class="${cls}" data-date="${iso}" aria-label="${esc(label)}">
+      <span class="num">${d.getDate()}</span>
+      ${items.map((e) => `<span class="chip" data-exam="${e.id}" style="--tab:${tabColor(e.subject)}" title="${esc(e.subject)}: ${esc(e.title)}">${esc(e.subject || e.title)}</span>`).join("")}
+    </button>`;
+    if (i === 34 && d.getMonth() !== calMonth.getMonth()) break; // 5 Wochen reichen
+  }
+  $("#cal-grid").innerHTML = html;
+}
+
+function renderExamList() {
+  const upcoming = exams.filter((e) => e.days_left >= 0);
+  $("#exam-list").innerHTML = upcoming.length ? upcoming.map((e) => `<li data-exam="${e.id}" style="--tab:${tabColor(e.subject)}">
+      <span class="when ${e.days_left <= 3 ? "soon" : ""}">${daysText(e.days_left)}</span>
+      <strong>${esc(e.title)}</strong><br>
+      <span class="hint">${esc(e.subject || NO_SUBJECT)}, ${esc(shortDate(e.date))}</span>
+      ${e.goals_total ? `<div class="bar" title="${e.goals_done} von ${e.goals_total} Lernzielen"><span style="width:${100 * e.goals_done / e.goals_total}%"></span></div>` : ""}
+    </li>`).join("") : `<li class="hint" style="border:0">Keine Prüfungen eingetragen.${subject === null ? "" : ` (nur ${esc(subjectName(subject))})`}</li>`;
+}
+
+$("#cal-prev").addEventListener("click", () => { calMonth.setMonth(calMonth.getMonth() - 1); renderCalendar(); });
+$("#cal-next").addEventListener("click", () => { calMonth.setMonth(calMonth.getMonth() + 1); renderCalendar(); });
+$("#cal-today").addEventListener("click", () => { calMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1); renderCalendar(); });
+$("#cal-grid").addEventListener("click", (e) => {
+  const chip = e.target.closest("[data-exam]");
+  if (chip) { openExam(Number(chip.dataset.exam)); return; }
+  const day = e.target.closest("[data-date]");
+  if (day) editExam(null, day.dataset.date);
+});
+$("#exam-list").addEventListener("click", (e) => {
+  const li = e.target.closest("[data-exam]");
+  if (li) openExam(Number(li.dataset.exam));
+});
+$("#exam-new").addEventListener("click", () => editExam(null));
+
+function editExam(exam, date) {
+  editingExam = exam;
+  $("#exam-detail").hidden = true;
+  $("#exam-form").hidden = false;
+  $("#exam-form-title").textContent = exam ? "Prüfung bearbeiten" : "Prüfung eintragen";
+  fillSubjectSelect($("#exam-subject"), exam ? exam.subject : subject ?? subjects[0]?.subject ?? "", false);
+  $("#exam-subject").insertAdjacentHTML("beforeend", `<option value="__new__">Neues Fach…</option>`);
+  $("#exam-subject").onchange = () => ($("#exam-subject-new").hidden = $("#exam-subject").value !== "__new__");
+  $("#exam-subject-new").hidden = true;
+  $("#exam-title").value = exam?.title || "";
+  $("#exam-date").value = exam?.date || date || isoDate(new Date(Date.now() + 7 * 86400000));
+  $("#exam-goals").value = exam ? exam.goals.map((g) => g.text).join("\n") : "";
+  $("#exam-delete").hidden = !exam;
+  $("#exam-form").scrollIntoView({ behavior: "smooth", block: "start" });
+  $("#exam-title").focus({ preventScroll: true });
+}
+
+$("#exam-cancel").addEventListener("click", () => { $("#exam-form").hidden = true; if (editingExam) openExam(editingExam.id); });
+
+$("#exam-goals-file").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const form = new FormData();
+  form.append("file", file);
+  try {
+    const { goals_text } = await api("/api/exams/goals-from-file", { method: "POST", body: form });
+    const current = $("#exam-goals").value.trim();
+    $("#exam-goals").value = (current ? current + "\n" : "") + goals_text;
+    toast("Lernziele übernommen. Lösche Zeilen, die keine Lernziele sind.");
+  } catch (err) { toast(err.message, true); }
+  e.target.value = "";
+});
+
+$("#exam-save").addEventListener("click", (e) => busy(e.target, "Speichere…", async () => {
+  const subj = $("#exam-subject").value === "__new__" ? $("#exam-subject-new").value.trim() : $("#exam-subject").value;
+  const body = { subject: subj, title: $("#exam-title").value.trim(), date: $("#exam-date").value, goals_text: $("#exam-goals").value };
+  if (!body.title) throw new Error("Gib der Prüfung ein Thema, z. B. „Zahlensysteme“.");
+  if (!body.date) throw new Error("Wähle ein Datum.");
+  const saved = editingExam ? await send(`/api/exams/${editingExam.id}`, body, "PATCH") : await send("/api/exams", body);
+  if (subj && !subjects.some((s) => s.subject === subj)) await send("/api/subjects", { name: subj });
+  toast(editingExam ? "Prüfung gespeichert." : "Prüfung eingetragen.");
+  $("#exam-form").hidden = true;
+  calMonth = new Date(saved.date.slice(0, 4), Number(saved.date.slice(5, 7)) - 1, 1);
+  await loadSubjects();
+  await loadCalendar();
+  openExam(saved.id);
+}));
+
+$("#exam-delete").addEventListener("click", async () => {
+  if (!confirm(`Prüfung „${editingExam.title}“ löschen?`)) return;
+  await api(`/api/exams/${editingExam.id}`, { method: "DELETE" });
+  toast("Prüfung gelöscht.");
+  $("#exam-form").hidden = true;
+  editingExam = null;
+  loadCalendar();
+});
+
+async function openExam(id) {
+  if (currentView !== "calendar") show("calendar");
+  const box = $("#exam-detail");
+  box.hidden = false;
+  $("#exam-form").hidden = true;
+  box.innerHTML = `<p class="hint">Suche passende Notizen…</p>`;
+  let ex;
+  try { ex = currentExam = await api(`/api/exams/${id}`); } catch (e) { box.innerHTML = `<p class="error-text">${esc(e.message)}</p>`; return; }
+  const today = isoDate(new Date());
+  const open = ex.goals.filter((g) => !g.done).length;
+  const goalsHtml = ex.goals.length ? ex.goals.map((g, i) => `<div class="goal ${g.done ? "done" : ""}">
+      <label><input type="checkbox" data-goal="${i}" ${g.done ? "checked" : ""}> ${esc(g.text)}</label>
+      ${g.docs.length ? `<div class="found">${g.docs.map((d) => `<button data-doc="${d.doc_id}" title="${esc(d.snippet)}">${esc(d.title.split(" / ").pop())}</button>`).join("")}</div>`
+        : g.done ? "" : `<p class="missing">Dazu habe ich nichts in deinen Notizen gefunden. Schau im Heft nach oder nimm die Lektion dazu auf.</p>`}
+    </div>`).join("")
+    : `<p class="hint">Keine Lernziele eingetragen. Quiz und Karteikarten nehmen dann den ganzen Stoff von ${esc(ex.subject || "diesem Fach")}.
+       <button class="link" data-edit>Lernziele hinzufügen</button></p>`;
+  const planHtml = ex.plan.length ? `<h3 style="margin-top:18px">Lernplan bis zur Prüfung</h3><ul class="plan-list">${ex.plan.map((p) => `
+      <li class="${p.date === today ? "today" : ""}"><span class="day">${p.date === today ? "Heute" : esc(shortDate(p.date))}</span>
+        <span>${esc(p.task)}${p.goals.length ? `: ${p.goals.map(esc).join("; ")}` : ""}</span></li>`).join("")}</ul>` : "";
+  box.innerHTML = `
+    <div class="row between">
+      <div><h2>${esc(ex.title)}</h2>
+        <p class="hint">${esc(ex.subject || NO_SUBJECT)}, ${esc(longDate(ex.date))}, <strong>${daysText(ex.days_left)}</strong></p></div>
+      <button data-edit>Bearbeiten</button>
+    </div>
+    <div class="row" style="margin:6px 0 10px">
+      <button class="primary" data-quiz ${ex.days_left < 0 ? "" : ""}>Quiz ${ex.goals.length ? (open ? "zu den offenen Lernzielen" : "zu allen Lernzielen") : "zum Fach"}</button>
+      <button data-cards>Karteikarten dazu erstellen</button>
+    </div>
+    <div id="exam-quiz"></div>
+    ${ex.goals.length ? `<h3 style="margin-top:14px">Lernziele <span class="hint">(${ex.goals_done} von ${ex.goals_total} abgehakt)</span></h3>` : ""}
+    ${goalsHtml}
+    ${planHtml}`;
+  box.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+$("#exam-detail").addEventListener("click", async (e) => {
+  const ex = currentExam;
+  if (!ex) return;
+  if (e.target.closest("[data-edit]")) editExam(ex);
+  else if (e.target.closest("[data-doc]")) openDoc(Number(e.target.closest("[data-doc]").dataset.doc));
+  else if (e.target.closest("[data-quiz]")) busy(e.target.closest("button"), "Erstelle Quiz…", async () => {
+    const { fragen } = await send(`/api/exams/${ex.id}/quiz?n=${Math.min(12, Math.max(5, ex.goals.length * 2))}`);
+    renderQuiz($("#exam-quiz"), fragen, ex.subject);
+  });
+  else if (e.target.closest("[data-cards]")) busy(e.target.closest("button"), "Erstelle Karten…", async () => {
+    const { created } = await send(`/api/exams/${ex.id}/flashcards`);
+    toast(`${plural(created, "Karteikarte", "Karteikarten")} zu dieser Prüfung erstellt.`);
+    loadStatus();
+  });
+});
+
+$("#exam-detail").addEventListener("change", async (e) => {
+  const box = e.target.closest("[data-goal]");
+  if (!box || !currentExam) return;
+  const done = currentExam.goals.map((g, i) => (i === Number(box.dataset.goal) ? box.checked : g.done));
+  try {
+    await send(`/api/exams/${currentExam.id}`, { done }, "PATCH");
+    if (box.checked) toast("Lernziel abgehakt. 💪");
+    await loadCalendar();
+    openExam(currentExam.id);
+  } catch (err) { toast(err.message, true); }
+});
 
 // --- Start -------------------------------------------------------------------
 

@@ -56,6 +56,14 @@ CREATE TABLE IF NOT EXISTS sync_state (     -- z. B. leere OneNote-Abschnitte, d
   external_id TEXT PRIMARY KEY,
   modified TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS exams (          -- Prüfungen im Kalender
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  subject TEXT NOT NULL DEFAULT '',
+  title TEXT NOT NULL,
+  date TEXT NOT NULL,                       -- JJJJ-MM-TT
+  goals TEXT NOT NULL DEFAULT '[]',         -- JSON: [{"text": ..., "done": false}]
+  created_at REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS page_cache (     -- schon von der KI abgeschriebene Bildseiten
   key TEXT PRIMARY KEY,
   text TEXT NOT NULL
@@ -73,11 +81,12 @@ CREATE TABLE IF NOT EXISTS flashcards (
 """
 
 DOC_FIELDS = {"title", "subject", "status", "progress", "source_path",
-              "raw_text", "clean_text", "summary", "error", "external_modified", "images_missing"}
+              "raw_text", "clean_text", "summary", "error", "external_modified", "images_missing", "title_custom"}
 
 # Spalten, die nach der ersten Version dazugekommen sind
 MIGRATIONS = {"external_id": "TEXT", "external_modified": "TEXT",
-              "images_missing": "INTEGER NOT NULL DEFAULT 0"}
+              "images_missing": "INTEGER NOT NULL DEFAULT 0",
+              "title_custom": "INTEGER NOT NULL DEFAULT 0"}  # 1 = selbst umbenannt, OneNote überschreibt den Titel nicht
 
 
 def connect() -> sqlite3.Connection:
@@ -151,7 +160,7 @@ def list_documents() -> list[dict]:
 def documents_by_external_prefix(prefix: str) -> dict[str, dict]:
     with session() as c:
         rows = c.execute(
-            "SELECT id, external_id, external_modified, status FROM documents WHERE external_id LIKE ?",
+            "SELECT id, external_id, external_modified, status, title_custom FROM documents WHERE external_id LIKE ?",
             (prefix.replace("%", "") + "%",),
         )
         return {r["external_id"]: dict(r) for r in rows}
@@ -208,12 +217,62 @@ def delete_document(doc_id: int) -> dict | None:
 
 # --- Fächer -----------------------------------------------------------------
 
+def _json_setting(key: str) -> list:
+    import json
+    try:
+        value = json.loads(get_setting(key, "[]"))
+    except ValueError:
+        return []
+    return value if isinstance(value, list) else []
+
+
+def _set_json_setting(key: str, value: list) -> None:
+    import json
+    set_setting(key, json.dumps(value, ensure_ascii=False))
+
+
 def list_subjects() -> list[dict]:
+    """Alle Fächer: aus Notizen, Prüfungen und selbst angelegte (auch leere), in der eigenen Reihenfolge."""
     with session() as c:
-        rows = c.execute(
-            "SELECT subject, count(*) AS count FROM documents GROUP BY subject ORDER BY subject = '', lower(subject)"
-        ).fetchall()
-        return [dict(r) for r in rows]
+        counts = {r["subject"]: r["count"] for r in c.execute(
+            "SELECT subject, count(*) AS count FROM documents GROUP BY subject")}
+        for r in c.execute("SELECT DISTINCT subject FROM exams WHERE subject != ''"):
+            counts.setdefault(r["subject"], 0)
+    for name in _json_setting("extra_subjects"):
+        counts.setdefault(name, 0)
+    order = {name: i for i, name in enumerate(_json_setting("subject_order"))}
+    names = sorted(counts, key=lambda n: (n == "", order.get(n, len(order)), n.lower()))
+    return [{"subject": n, "count": counts[n]} for n in names]
+
+
+def add_subject(name: str) -> None:
+    extra = _json_setting("extra_subjects")
+    if name not in extra:
+        _set_json_setting("extra_subjects", extra + [name])
+
+
+def remove_subject(name: str) -> bool:
+    """Entfernt ein leeres Fach. False, wenn noch Notizen oder Prüfungen drin sind."""
+    with session() as c:
+        used = c.execute("SELECT (SELECT count(*) FROM documents WHERE subject = ?)"
+                         " + (SELECT count(*) FROM exams WHERE subject = ?)", (name, name)).fetchone()[0]
+    if used:
+        return False
+    _set_json_setting("extra_subjects", [n for n in _json_setting("extra_subjects") if n != name])
+    _set_json_setting("subject_order", [n for n in _json_setting("subject_order") if n != name])
+    return True
+
+
+def set_subject_order(names: list[str]) -> None:
+    _set_json_setting("subject_order", names)
+
+
+def move_documents(doc_ids: list[int], subject: str) -> int:
+    if not doc_ids:
+        return 0
+    with session() as c:
+        marks = ",".join("?" * len(doc_ids))
+        return c.execute(f"UPDATE documents SET subject = ? WHERE id IN ({marks})", (subject, *doc_ids)).rowcount
 
 
 def rename_subject(old: str, new: str) -> int:
@@ -221,6 +280,11 @@ def rename_subject(old: str, new: str) -> int:
     with session() as c:
         n = c.execute("UPDATE documents SET subject = ? WHERE subject = ?", (new, old)).rowcount
         c.execute("UPDATE subject_alias SET subject = ? WHERE subject = ?", (new, old))
+        c.execute("UPDATE exams SET subject = ? WHERE subject = ?", (new, old))
+    for key in ("extra_subjects", "subject_order"):
+        names = [new if n == old else n for n in _json_setting(key)]
+        _set_json_setting(key, list(dict.fromkeys(names)))  # doppelte (zusammengelegt) entfernen
+    with session() as c:
         c.execute("INSERT OR REPLACE INTO subject_alias (source, subject) VALUES (?, ?)", (old, new))
         c.execute("DELETE FROM subject_alias WHERE source = subject")
         return n
@@ -397,3 +461,49 @@ def stats(subject: str | None = None) -> dict:
         "quiz_percent": round(100 * quiz[0] / quiz[1]) if quiz[1] else None,
         "recent": [dict(r) for r in recent],
     }
+
+
+# --- Prüfungen ---------------------------------------------------------------
+
+def _exam(row) -> dict:
+    import json
+    return {**dict(row), "goals": json.loads(row["goals"] or "[]")}
+
+
+def create_exam(subject: str, title: str, date: str, goals: list[dict]) -> int:
+    import json
+    with session() as c:
+        cur = c.execute("INSERT INTO exams (subject, title, date, goals, created_at) VALUES (?, ?, ?, ?, ?)",
+                        (subject, title, date, json.dumps(goals, ensure_ascii=False), time.time()))
+        return cur.lastrowid
+
+
+def update_exam(exam_id: int, **fields) -> None:
+    import json
+    if "goals" in fields:
+        fields["goals"] = json.dumps(fields["goals"], ensure_ascii=False)
+    fields = {k: v for k, v in fields.items() if k in {"subject", "title", "date", "goals"}}
+    if not fields:
+        return
+    with session() as c:
+        c.execute(f"UPDATE exams SET {', '.join(f'{k} = ?' for k in fields)} WHERE id = ?", (*fields.values(), exam_id))
+
+
+def get_exam(exam_id: int) -> dict | None:
+    with session() as c:
+        row = c.execute("SELECT * FROM exams WHERE id = ?", (exam_id,)).fetchone()
+        return _exam(row) if row else None
+
+
+def list_exams(subject: str | None = None) -> list[dict]:
+    with session() as c:
+        if subject is None:
+            rows = c.execute("SELECT * FROM exams ORDER BY date, id").fetchall()
+        else:
+            rows = c.execute("SELECT * FROM exams WHERE subject = ? ORDER BY date, id", (subject,)).fetchall()
+        return [_exam(r) for r in rows]
+
+
+def delete_exam(exam_id: int) -> None:
+    with session() as c:
+        c.execute("DELETE FROM exams WHERE id = ?", (exam_id,))

@@ -76,3 +76,43 @@ def test_streak_counts_consecutive_days():
     assert db.streak_days([now, now - day, now - 2 * day], now=now) == 3
     assert db.streak_days([now - day, now - 2 * day], now=now) == 2  # heute noch nicht gelernt
     assert db.streak_days([now - 3 * day], now=now) == 0
+
+
+def test_manage_subjects_and_move_notes(fake_llm):
+    with TestClient(app) as client:
+        a = client.post("/api/notes", json={"title": "A", "text": "eins", "subject": "Mathe"}).json()["id"]
+        b = client.post("/api/notes", json={"title": "B", "text": "zwei", "subject": "Mathe"}).json()["id"]
+        client.post("/api/subjects", json={"name": "Physik"})
+        names = lambda: [s["subject"] for s in client.get("/api/subjects").json()]
+        assert names() == ["Mathe", "Physik"]
+        client.post("/api/subjects/order", json={"order": ["Physik", "Mathe"]})
+        assert names() == ["Physik", "Mathe"]
+
+        assert client.post("/api/documents/move", json={"ids": [a], "subject": "Physik"}).json() == {"moved": 1}
+        assert db.get_document(a)["subject"] == "Physik" and db.get_document(b)["subject"] == "Mathe"
+        assert client.delete("/api/subjects", params={"name": "Physik"}).status_code == 400  # nicht leer
+
+        client.post("/api/subjects/rename", json={"old": "Physik", "new": "Naturlehre"})
+        assert names() == ["Naturlehre", "Mathe"]
+        client.post("/api/subjects/rename", json={"old": "Naturlehre", "new": "Mathe"})  # zusammenlegen
+        assert names() == ["Mathe"]
+
+        client.post("/api/subjects", json={"name": "Leer"})
+        assert client.delete("/api/subjects", params={"name": "Leer"}).status_code == 200
+        assert names() == ["Mathe"]
+
+
+def test_renamed_onenote_title_survives_sync():
+    from app import onenote
+    sections = lambda m: [{"id": "{A}", "name": "Brüche", "notebook": "Mathe", "path": "Mathe / Brüche", "lastModified": m}]
+
+    def export(section_id, target):
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"%PDF-1.4")
+
+    onenote.sync(lister=lambda: sections("1"), exporter=export)
+    doc = db.list_documents()[0]
+    with TestClient(app) as client:
+        client.patch(f"/api/documents/{doc['id']}", json={"title": "Brüche (Test 3)"})
+    onenote.sync(lister=lambda: sections("2"), exporter=export)
+    assert db.get_document(doc["id"])["title"] == "Brüche (Test 3)"

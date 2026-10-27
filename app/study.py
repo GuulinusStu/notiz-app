@@ -84,17 +84,20 @@ def _numbered(excerpts: list[dict]) -> str:
     return "\n\n".join(f"[{i}] ({e['title']})\n{e['text']}" for i, e in enumerate(excerpts, start=1))
 
 
-def _source_text(doc: dict | None, subject: str | None) -> tuple[str, list[dict]]:
+def _source_text(doc: dict | None, subject: str | None,
+                 excerpts: list[dict] | None = None) -> tuple[str, list[dict]]:
     if doc is not None:
         return study_text(doc), []
-    excerpts = subject_excerpts(subject or "")
+    if excerpts is None:
+        excerpts = subject_excerpts(subject or "")
     if not excerpts:
-        raise llm.LLMError("In diesem Fach gibt es noch keine fertig verarbeiteten Notizen.")
+        raise llm.LLMError("Dazu gibt es noch keine passenden, fertig verarbeiteten Notizen.")
     return _numbered(excerpts), excerpts
 
 
-def make_quiz(doc: dict | None = None, n: int = 5, subject: str | None = None) -> list[dict]:
-    text, _ = _source_text(doc, subject)
+def make_quiz(doc: dict | None = None, n: int = 5, subject: str | None = None,
+              excerpts: list[dict] | None = None) -> list[dict]:
+    text, _ = _source_text(doc, subject, excerpts)
     data = llm.parse_json(llm.ask(QUIZ_PROMPT.format(n=n), text, json_mode=True))
     questions = []
     for q in data.get("fragen", []) if isinstance(data, dict) else []:
@@ -109,8 +112,9 @@ def make_quiz(doc: dict | None = None, n: int = 5, subject: str | None = None) -
     return questions
 
 
-def make_flashcards(doc: dict | None = None, n: int = 10, subject: str | None = None) -> int:
-    text, excerpts = _source_text(doc, subject)
+def make_flashcards(doc: dict | None = None, n: int = 10, subject: str | None = None,
+                    excerpts: list[dict] | None = None) -> int:
+    text, excerpts = _source_text(doc, subject, excerpts)
     data = llm.parse_json(llm.ask(CARDS_PROMPT.format(n=n), text, json_mode=True))
     created = 0
     for c in data.get("karten", []) if isinstance(data, dict) else []:
