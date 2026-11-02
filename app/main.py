@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import config, db, exams, ingest, llm, onenote, recorder, srs, study, worker
+from . import config, db, exams, ingest, llm, nesa, onenote, recorder, srs, study, worker
 
 PDF_TYPES = {".pdf"}
 AUDIO_TYPES = {".webm", ".ogg", ".mp3", ".m4a", ".wav", ".mp4", ".aac", ".flac", ".opus"}
@@ -31,6 +31,8 @@ async def lifespan(_app: FastAPI):
         later(config.STARTUP_DELAY, onenote.start_sync)
     if config.AUTO_BACKUP:
         later(config.STARTUP_DELAY + 60, start_backups)
+    if config.NESA_AUTO_SYNC:
+        later(config.STARTUP_DELAY + 30, nesa.start_scheduler)
     yield
 
 
@@ -567,6 +569,34 @@ def create_exam(e: ExamIn):
     return exams.summary(db.get_exam(exam_id))
 
 
+class NesaIn(BaseModel):
+    url: str | None = None
+    user: str | None = None
+    password: str | None = None
+
+
+@app.get("/api/nesa")
+def nesa_status():
+    return nesa.status()
+
+
+@app.post("/api/nesa")
+def nesa_save(n: NesaIn):
+    """Zugangsdaten für schulNetz. Das Passwort wird nie zurückgegeben."""
+    nesa.save_credentials(n.url, n.user, n.password)
+    return nesa.status()
+
+
+@app.post("/api/nesa/sync")
+def nesa_sync():
+    if not nesa.configured():
+        raise HTTPException(400, "schulNetz ist noch nicht eingerichtet. Trag die Zugangsdaten in den Einstellungen ein.")
+    result = nesa.run_sync()
+    if result["error"]:
+        raise HTTPException(502, result["error"])
+    return result
+
+
 @app.get("/api/exams.ics")
 def exams_ics():
     return Response(exams.ics(db.list_exams()), media_type="text/calendar; charset=utf-8",
@@ -587,6 +617,8 @@ def get_exam(exam_id: int):
 def update_exam(exam_id: int, u: ExamUpdate):
     exam = require_exam(exam_id)
     fields = {k: v.strip() for k, v in (("subject", u.subject), ("title", u.title)) if v is not None}
+    if "subject" in fields:
+        nesa.remember_subject(exam, fields["subject"])
     if u.date is not None:
         fields["date"] = check_date(u.date)
     goals = exam["goals"]

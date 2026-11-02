@@ -236,7 +236,11 @@
               <button id="exam-new" class="primary">Prüfung eintragen</button>
             </div>
             <ul id="exam-list" class="exam-list"></ul>
-            <a id="exam-ics" class="link" href="/api/exams.ics">In den Handy-Kalender übernehmen (.ics)</a>
+            <div class="row between" style="margin-top:8px">
+              <a id="exam-ics" class="link" href="/api/exams.ics">In den Handy-Kalender übernehmen (.ics)</a>
+              <button id="nesa-pull" title="Prüfungen aus schulNetz holen">Aus schulNetz holen</button>
+            </div>
+            <p id="nesa-info" class="hint"></p>
           </div>
         </div>
 
@@ -347,6 +351,22 @@
             <button id="set-save" class="primary">Speichern</button>
             <button id="set-test">Verbindung testen</button>
             <span id="set-result" class="hint"></span>
+          </div>
+        </div>
+        <div class="panel">
+          <h2>Prüfungen aus schulNetz (NESA)</h2>
+          <p class="hint">Die App meldet sich alle paar Stunden bei schulNetz an und trägt deine nächsten Prüfungen im Kalender ein.
+            Benutzername und Passwort bleiben auf diesem Laptop. Das Passwort wird mit deinem Windows-Konto verschlüsselt und kommt nicht in die Sicherung.</p>
+          <label for="nesa-url">Adresse von schulNetz</label>
+          <input id="nesa-url" placeholder="z. B. https://schulnetz.bbbaden.ch" autocomplete="off">
+          <label for="nesa-user">Benutzername</label>
+          <input id="nesa-user" autocomplete="off">
+          <label for="nesa-password">Passwort <span id="nesa-password-hint" class="hint"></span></label>
+          <input id="nesa-password" type="password" autocomplete="new-password">
+          <div class="row" style="margin-top:10px">
+            <button id="nesa-save" class="primary">Speichern und Prüfungen holen</button>
+            <button id="nesa-forget">Zugangsdaten löschen</button>
+            <span id="nesa-result" class="hint"></span>
           </div>
         </div>
         <div class="panel flat">

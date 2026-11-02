@@ -110,7 +110,7 @@ function show(view) {
   if (view === "home") loadHome();
   if (view === "notes") renderDocs();
   if (view === "cards") loadCards();
-  if (view === "settings") { loadSettings(); loadBackup(); }
+  if (view === "settings") { loadSettings(); loadBackup(); loadNesa(); }
   if (view === "calendar") loadCalendar();
   if (view === "subjects") renderSubjectAdmin();
   if (view !== "notes") setSelecting(false);
@@ -1264,6 +1264,68 @@ $("#timer-dialog").addEventListener("click", (e) => {
   startTimer(Number(b.dataset.min));
 });
 
+// --- schulNetz (NESA) ---------------------------------------------------------------
+
+function nesaText(n) {
+  if (n.running) return "Hole Prüfungen aus schulNetz…";
+  if (n.error) return n.error;
+  if (n.message) return n.message;
+  if (n.last) return `Zuletzt geholt: ${new Date(n.last * 1000).toLocaleString("de-CH", { dateStyle: "medium", timeStyle: "short" })}`;
+  return n.configured ? "" : "Noch nicht eingerichtet.";
+}
+
+async function loadNesa() {
+  try {
+    const n = await api("/api/nesa");
+    $("#nesa-url").value = n.url || "";
+    $("#nesa-user").value = n.user || "";
+    $("#nesa-password").value = "";
+    $("#nesa-password-hint").textContent = n.password_set ? "(gespeichert, leer lassen zum Behalten)" : "(noch keins)";
+    $("#nesa-result").textContent = nesaText(n);
+    return n;
+  } catch { return null; }
+}
+
+async function pullNesa() {
+  const n = await send("/api/nesa/sync");
+  toast(n.message || "Prüfungen geholt.");
+  return n;
+}
+
+$("#nesa-save").addEventListener("click", (e) => busy(e.target, "Hole Prüfungen…", async () => {
+  const body = { url: $("#nesa-url").value.trim(), user: $("#nesa-user").value.trim() };
+  if ($("#nesa-password").value) body.password = $("#nesa-password").value;
+  if (!body.url || !body.user) throw new Error("Bitte Adresse und Benutzername eintragen.");
+  await send("/api/nesa", body);
+  $("#nesa-password").value = "";
+  try { await pullNesa(); } finally { loadNesa(); }
+}));
+
+$("#nesa-forget").addEventListener("click", (e) => busy(e.target, "Lösche…", async () => {
+  await send("/api/nesa", { user: "", password: "" });
+  toast("schulNetz-Zugangsdaten gelöscht.");
+  loadNesa();
+}));
+
+async function showNesaInfo() {
+  try {
+    const n = await api("/api/nesa");
+    $("#nesa-pull").hidden = !n.configured;
+    if (n.configured) $("#nesa-info").textContent = nesaText(n);
+    else $("#nesa-info").innerHTML = 'Prüfungen automatisch aus schulNetz holen: <a href="#" data-go="settings">in den Einstellungen einrichten</a>';
+  } catch { /* egal */ }
+}
+
+$("#nesa-info").addEventListener("click", (e) => {
+  const a = e.target.closest("[data-go]");
+  if (a) { e.preventDefault(); show(a.dataset.go); }
+});
+
+$("#nesa-pull").addEventListener("click", (e) => busy(e.target, "Hole…", async () => {
+  try { await pullNesa(); } finally { showNesaInfo(); }
+  loadCalendar();
+}));
+
 // --- Sicherung ------------------------------------------------------------------
 
 async function loadBackup() {
@@ -1450,6 +1512,7 @@ async function loadCalendar() {
   }
   renderCalendar();
   renderExamList();
+  showNesaInfo();
 }
 
 function renderCalendar() {

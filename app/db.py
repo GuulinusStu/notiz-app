@@ -106,6 +106,8 @@ MIGRATIONS = {"external_id": "TEXT", "external_modified": "TEXT",
               "blank_pages": "INTEGER NOT NULL DEFAULT 0",   # PDF-Seiten ohne jeden Inhalt
               "marks": "TEXT NOT NULL DEFAULT ''"}            # „Wichtig“-Stellen einer Aufnahme (Sekunden)  # 1 = selbst umbenannt, OneNote überschreibt den Titel nicht
 
+EXAM_MIGRATIONS = {"external_id": "TEXT"}  # z. B. nesa:<Kurs>|<Thema> für aus schulNetz geholte Prüfungen
+
 
 def connect() -> sqlite3.Connection:
     config.DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -132,6 +134,10 @@ def init() -> None:
         for column, kind in MIGRATIONS.items():
             if column not in existing:
                 c.execute(f"ALTER TABLE documents ADD COLUMN {column} {kind}")
+        exam_columns = {r["name"] for r in c.execute("PRAGMA table_info(exams)")}
+        for column, kind in EXAM_MIGRATIONS.items():
+            if column not in exam_columns:
+                c.execute(f"ALTER TABLE exams ADD COLUMN {column} {kind}")
 
 
 # --- Dokumente ---------------------------------------------------------------
@@ -496,12 +502,24 @@ def _exam(row) -> dict:
     return {**dict(row), "goals": json.loads(row["goals"] or "[]")}
 
 
-def create_exam(subject: str, title: str, date: str, goals: list[dict]) -> int:
+def create_exam(subject: str, title: str, date: str, goals: list[dict], external_id: str | None = None) -> int:
     import json
     with session() as c:
-        cur = c.execute("INSERT INTO exams (subject, title, date, goals, created_at) VALUES (?, ?, ?, ?, ?)",
-                        (subject, title, date, json.dumps(goals, ensure_ascii=False), time.time()))
+        cur = c.execute("INSERT INTO exams (subject, title, date, goals, created_at, external_id)"
+                        " VALUES (?, ?, ?, ?, ?, ?)",
+                        (subject, title, date, json.dumps(goals, ensure_ascii=False), time.time(), external_id))
         return cur.lastrowid
+
+
+def exam_by_external_id(external_id: str) -> dict | None:
+    with session() as c:
+        row = c.execute("SELECT * FROM exams WHERE external_id = ?", (external_id,)).fetchone()
+        return _exam(row) if row else None
+
+
+def set_subject_alias(source: str, subject: str) -> None:
+    with session() as c:
+        c.execute("INSERT OR REPLACE INTO subject_alias (source, subject) VALUES (?, ?)", (source, subject))
 
 
 def update_exam(exam_id: int, **fields) -> None:
@@ -590,7 +608,7 @@ def backup(target_dir, keep: int = 7):
         try:
             src.backup(dst)
             # Geheimnisse gehören nicht in eine Sicherung, die in der Cloud landet
-            dst.execute("DELETE FROM settings WHERE key IN ('openrouter_key')")
+            dst.execute("DELETE FROM settings WHERE key IN ('openrouter_key', 'nesa_password', 'nesa_user')")
             dst.commit()
             dst.execute("VACUUM")
         finally:
