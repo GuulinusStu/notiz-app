@@ -34,3 +34,5 @@ AUTO_BACKUP = os.environ.get("NOTIZAPP_AUTO_BACKUP", "1") == "1"
 STARTUP_DELAY = float(os.environ.get("NOTIZAPP_STARTUP_DELAY", "120"))
 # Lektionen nach Stundenplan automatisch aufnehmen
 AUTO_RECORD = os.environ.get("NOTIZAPP_AUTO_RECORD", "1") == "1"
+# Prüfungen aus schulNetz (NESA) automatisch holen, sobald die Zugangsdaten eingetragen sind
+NESA_AUTO_SYNC = os.environ.get("NOTIZAPP_NESA_AUTO_SYNC", "1") == "1"

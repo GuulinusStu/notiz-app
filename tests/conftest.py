@@ -9,6 +9,7 @@ os.environ["NOTIZAPP_ONENOTE_AUTO_SYNC"] = "0"
 os.environ["NOTIZAPP_AUTO_RETRY"] = "0"
 os.environ["NOTIZAPP_AUTO_BACKUP"] = "0"
 os.environ["NOTIZAPP_AUTO_RECORD"] = "0"
+os.environ["NOTIZAPP_NESA_AUTO_SYNC"] = "0"
 
 import numpy as np
 import pytest

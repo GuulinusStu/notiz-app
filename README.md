@@ -56,6 +56,21 @@ Die PDFs dann unter „Oder PDFs selbst hochladen“ importieren.
 
 Hinweis: Getippter Text wird gelesen. Handschrift und Text in Bildern werden noch nicht erkannt.
 
+## Prüfungen aus schulNetz holen
+
+Unter ⚙️ Einstellungen → **„Prüfungen aus schulNetz (NESA)“** die Adresse von schulNetz
+(z. B. `https://schulnetz.bbbaden.ch`), deinen Benutzernamen und dein Passwort eintragen.
+Die App meldet sich dann beim Start und alle 6 Stunden an, liest auf der Startseite die Tabelle
+mit deinen nächsten Prüfungen und trägt sie im Prüfungskalender ein. Verschiebt die Lehrperson
+eine Prüfung, wird das Datum angepasst. Unter „Prüfungen“ gibt es auch den Knopf „Aus schulNetz holen“.
+
+- Die Zugangsdaten bleiben auf deinem Laptop. Das Passwort wird mit deinem Windows-Konto
+  verschlüsselt und kommt nicht in die Sicherung.
+- Das Fach wird aus dem Kursnamen erraten (z. B. „Mathematik-INP1a“ → Fach „Mathe“). Änderst du das
+  Fach einer geholten Prüfung, landen künftige Prüfungen aus diesem Kurs auch dort.
+- Findet die App nach dem Anmelden keine Prüfungstabelle, legt sie die Startseite zum Prüfen unter
+  `data/schulnetz-startseite.html` ab.
+
 ## Tipps zur Aufnahme
 
 - **Frag vorher die Lehrperson**, ob du aufnehmen darfst. In der Schweiz ist es verboten,
@@ -77,6 +92,7 @@ Hinweis: Getippter Text wird gelesen. Handschrift und Text in Bildern werden noc
 | `NOTIZAPP_DATA` | `data/` | Wo Notizen und Aufnahmen gespeichert werden |
 | `NOTIZAPP_PORT` | `8000` | Port im Browser |
 | `NOTIZAPP_ONENOTE_AUTO_SYNC` | `1` | OneNote beim Start synchronisieren (`0` = aus) |
+| `NOTIZAPP_NESA_AUTO_SYNC` | `1` | Prüfungen alle 6 Stunden aus schulNetz holen (`0` = aus) |
 
 ## Für Entwickler
 

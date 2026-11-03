@@ -172,12 +172,13 @@ def test_read_pages_are_cached_and_limit_resumes_later(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "read_image", limited)
     first = ingest.extract_pdf_text(path, read_images=True)
     assert first.count("Seite gelesen") == 1 and first.images_missing == 2
+    assert first.missing_pages == [2, 3]
     assert len(calls) == 2  # nach dem Limit nicht weiter versucht
 
     calls.clear()
     monkeypatch.setattr(llm, "read_image", lambda png, **kw: calls.append(png) or "Seite gelesen")
     second = ingest.extract_pdf_text(path, read_images=True)
-    assert second.count("Seite gelesen") == 3 and second.images_missing == 0
+    assert second.count("Seite gelesen") == 3 and second.images_missing == 0 and second.missing_pages == []
     assert len(calls) == 2  # die erste Seite kam aus dem Speicher
 
 

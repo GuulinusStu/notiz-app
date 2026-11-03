@@ -73,6 +73,7 @@ MIN_PAGE_WORDS = 25  # weniger Text auf einer Seite = vermutlich Bild, Scan oder
 class PdfText(str):
     """Text eines PDFs; images_missing zählt Bildseiten, die die KI (noch) nicht lesen konnte."""
     images_missing = 0
+    missing_pages: list[int] = []  # Seitennummern dieser Bildseiten, damit man sie im PDF selbst anschauen kann
     blank_pages = 0  # Seiten ganz ohne Inhalt, z. B. in OneNote nicht heruntergeladen
 
 
@@ -86,7 +87,7 @@ def extract_pdf_text(path: Path, progress: ProgressFn = lambda _: None, read_ima
 
     import pymupdf
 
-    pages, missing, blank, limit_hit = [], 0, 0, False
+    pages, missing, blank, limit_hit = [], [], 0, False
     model = llm.vision_model() if read_images else ""
     with pymupdf.open(path) as pdf:
         for i, page in enumerate(pdf, start=1):
@@ -106,13 +107,14 @@ def extract_pdf_text(path: Path, progress: ProgressFn = lambda _: None, read_ima
                     elif seen is not None:
                         db.cache_page(key, seen)
                 if seen is None:
-                    missing += 1
+                    missing.append(i)
                 else:
                     text = (text + "\n" + seen).strip()
             if text:
                 pages.append(f"--- Seite {i} ---\n{text}")
     result = PdfText("\n\n".join(pages))
-    result.images_missing = missing
+    result.images_missing = len(missing)
+    result.missing_pages = missing
     result.blank_pages = blank
     return result
 
@@ -330,7 +332,7 @@ def process(doc_id: int) -> None:
                                          "(Tageslimit). Wird automatisch später nochmals versucht.")
                 raise ValueError("Im PDF wurde kein Text gefunden (evtl. nur Bilder oder Handschrift).")
             db.update_document(doc_id, raw_text=str(raw), clean_text=str(raw), images_missing=raw.images_missing,
-                               blank_pages=raw.blank_pages)
+                               missing_pages=",".join(map(str, raw.missing_pages)), blank_pages=raw.blank_pages)
             index(doc_id, raw, progress)
         elif doc["kind"] == "text":
             db.update_document(doc_id, clean_text=doc["raw_text"])
