@@ -359,7 +359,7 @@ async function openDoc(id, keepOutput = false) {
   $("#doc-title").title = doc.title;
   const meta = [KIND_NAME[doc.kind], doc.title.includes(" / ") ? doc.title.split(" / ").slice(0, -1).join(" › ") : "",
     `hinzugefügt ${dateText(doc.created_at)}`, doc.status !== "ready" ? STATUS[doc.status] : "", doc.progress,
-    doc.images_missing ? `${plural(doc.images_missing, "Bildseite", "Bildseiten")} mit Handschrift noch nicht gelesen (Tageslimit), wird automatisch nachgeholt` : "",
+    doc.images_missing ? `${plural(doc.images_missing, "Bildseite", "Bildseiten")} mit Handschrift noch nicht gelesen (Tageslimit${doc.missing_pages ? `, Seite ${doc.missing_pages.replaceAll(",", ", ")}` : ""}), wird automatisch nachgeholt` : "",
     doc.blank_pages ? `${plural(doc.blank_pages, "leere Seite", "leere Seiten")} (falls dort etwas stehen sollte: in OneNote öffnen, warten bis alles geladen ist, dann neu synchronisieren)` : ""];
   $("#doc-meta").innerHTML = esc(meta.filter(Boolean).join(", ")) + (doc.error ? `<br><span class="error-text">${esc(doc.error)}</span>` : "");
   fillSubjectSelect($("#doc-subject"), doc.subject);

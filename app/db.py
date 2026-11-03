@@ -97,14 +97,15 @@ CREATE TABLE IF NOT EXISTS flashcards (
 """
 
 DOC_FIELDS = {"title", "subject", "status", "progress", "source_path",
-              "raw_text", "clean_text", "summary", "error", "external_modified", "images_missing", "title_custom", "blank_pages", "marks"}
+              "raw_text", "clean_text", "summary", "error", "external_modified", "images_missing", "title_custom", "blank_pages", "marks", "missing_pages"}
 
 # Spalten, die nach der ersten Version dazugekommen sind
 MIGRATIONS = {"external_id": "TEXT", "external_modified": "TEXT",
               "images_missing": "INTEGER NOT NULL DEFAULT 0",
               "title_custom": "INTEGER NOT NULL DEFAULT 0",
               "blank_pages": "INTEGER NOT NULL DEFAULT 0",   # PDF-Seiten ohne jeden Inhalt
-              "marks": "TEXT NOT NULL DEFAULT ''"}            # „Wichtig“-Stellen einer Aufnahme (Sekunden)  # 1 = selbst umbenannt, OneNote überschreibt den Titel nicht
+              "marks": "TEXT NOT NULL DEFAULT ''",            # „Wichtig“-Stellen einer Aufnahme (Sekunden)  # 1 = selbst umbenannt, OneNote überschreibt den Titel nicht
+              "missing_pages": "TEXT NOT NULL DEFAULT ''"}   # Bildseiten, die die KI noch nicht lesen konnte (z. B. "3,5")
 
 EXAM_MIGRATIONS = {"external_id": "TEXT"}  # z. B. nesa:<Kurs>|<Thema> für aus schulNetz geholte Prüfungen
 
